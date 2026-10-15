@@ -54,11 +54,19 @@ async function Welcome() {
         .
       </p>
       <p className="mt-2 text-sm text-muted">
-        Corporation fits you can see follow your main character&apos;s corporation.{" "}
-        <Link href="/characters" className="text-accent hover:underline">
+        Corporation fits you can see follow your main character&apos;s corporation.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-2 text-sm">
+        <Link href="/fittings" className="rounded border border-border px-3 py-1.5 hover:border-accent">
+          My fittings
+        </Link>
+        <Link href="/library" className="rounded border border-border px-3 py-1.5 hover:border-accent">
+          Library
+        </Link>
+        <Link href="/characters" className="rounded border border-border px-3 py-1.5 hover:border-accent">
           Manage characters
         </Link>
-      </p>
+      </div>
     </section>
   );
 }

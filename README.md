@@ -27,7 +27,23 @@ EVE SSO. What a profile can see follows its **main character's corporation**.
   | `link` | anyone holding the unguessable share link; never listed |
   | `public` | everyone, signed in or not; listed in the public library |
 
-  The rules live in `src/lib/permissions.ts`.
+  The rules live in `src/lib/permissions.ts`. A corporation fit stays with its corporation
+  through edits. Only re-sharing it (switching visibility away and back) moves it to the owner's
+  current main corporation.
+
+## Fittings
+
+- **New fit**: paste EFT, the text EVE's fitting window and Pyfa copy to the clipboard.
+  Modules are placed by each type's own slot effect, so section order does not matter. Loaded
+  charges are dropped with a warning, because EVE fittings keep charges in cargo.
+- **Import from game**: lists the fits saved on a character that allows fitting sync, and marks
+  ones already in your collection. Slot numbers are ignored when comparing.
+- **Send to game**: writes any fit you can see to one of your characters' saved fittings.
+- **Library**: fits shared with your main's corporation, plus the public library. *Save a copy*
+  turns any visible fit into a private one of your own.
+- Names (50 chars) and descriptions (500) are capped at EVE's limits, so every stored fit can be
+  sent to the game.
+- Type names and slots come from ESI on first sight and are cached in `eve_types`.
 
 ## Stack
 
@@ -38,6 +54,10 @@ CCP's JWKS) · Tailwind CSS 4 · Vitest.
 ```
 src/app/auth/{login,callback,logout}   SSO round trip and sign-out (Route Handlers)
 src/app/characters                     linked characters: main, unlink, consent (Server Actions)
+src/app/fittings, library, s/[token]   fits: mine, new/edit, detail, import, library, share links
+src/lib/fittings/eft.ts                EFT parse/build/export (pure)
+src/lib/fittings/store.ts              fittings data access, permission-checked; ESI import/send
+src/lib/eve/types.ts                   type names and slot kinds, cached from ESI
 src/lib/auth/accounts.ts               profile/character rules: sign-in, link, transfer, main
 src/lib/auth/tokens.ts                 per-character ESI access tokens with locked refresh
 src/lib/auth/session.ts                session cookie (hashed in the DB) and SSO flow cookie

@@ -30,9 +30,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Link href="/" className="font-semibold tracking-wide text-accent">
               {SITE_NAME}
             </Link>
-            <Link href="/characters" className="text-sm text-muted hover:text-foreground">
-              Characters
-            </Link>
+            {[
+              ["/fittings", "My fittings"],
+              ["/library", "Library"],
+              ["/characters", "Characters"],
+            ].map(([href, label]) => (
+              <Link key={href} href={href} className="text-sm text-muted hover:text-foreground">
+                {label}
+              </Link>
+            ))}
             <div className="ml-auto">
               {/* Reads the session cookie, so it streams in behind its own boundary. */}
               <Suspense fallback={<div className="h-8 w-24" />}>
