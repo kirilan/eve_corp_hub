@@ -150,13 +150,23 @@ Preview builds skip it, so a branch can never change the production schema.
 4. Set for Production: `APP_URL` (`https://<production domain>`), `EVE_CLIENT_ID`,
    `EVE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` (a new `openssl rand -base64 32`; never reuse the
    dev key), `ESI_CONTACT`.
-5. Redeploy. Log in once on the site, then grant the first super user against the production
-   database:
+5. Redeploy, and check that the build log says `migrations applied`. Log in once on the site.
+   Then make yourself the first super user in Neon's **SQL Editor**, so the production
+   credentials never leave Neon:
 
-   ```bash
-   # .env.production.local (git-ignored) holding DATABASE_URL=<Neon connection string>
-   pnpm exec tsx --env-file=.env.production.local scripts/super-user.mts "Character Name"
+   ```sql
+   BEGIN;
+   UPDATE users SET is_super_user = true
+   WHERE id = (SELECT user_id FROM characters WHERE lower(name) = lower('Character Name'));
+   INSERT INTO audit_log (actor_name, action, subject_type, subject_id, subject_name, corporation_id, details)
+   SELECT 'Neon SQL editor', 'user.super_granted', 'user', u.id::text, coalesce(m.name, c.name), NULL, '{}'::jsonb
+   FROM characters c JOIN users u ON u.id = c.user_id LEFT JOIN characters m ON m.id = u.main_character_id
+   WHERE lower(c.name) = lower('Character Name');
+   COMMIT;
    ```
+
+   After that, super users grant each other on `/admin`. `pnpm super-user` does the same
+   against whatever `DATABASE_URL` it is given, and is meant for local development.
 
 EVE SSO only redirects to registered callback URLs, and Vercel preview deployments get a new URL
 each time. So login works on production and locally, but not on preview deployments.

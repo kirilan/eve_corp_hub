@@ -82,3 +82,12 @@ describe("super user scopes", () => {
     expect(canReadAudit(owner, null)).toBe(false);
   });
 });
+
+describe("strictSsl", () => {
+  it("upgrades only the modes pg will weaken", async () => {
+    const { strictSsl } = await import("@/db/connection-string");
+    expect(strictSsl("postgres://h/db?sslmode=require&channel_binding=require")).toBe("postgres://h/db?sslmode=verify-full&channel_binding=require");
+    expect(strictSsl("postgres://h/db?x=1&sslmode=prefer")).toBe("postgres://h/db?x=1&sslmode=verify-full");
+    expect(strictSsl("postgres://127.0.0.1/db?sslmode=disable")).toBe("postgres://127.0.0.1/db?sslmode=disable");
+  });
+});

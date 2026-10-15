@@ -2,13 +2,14 @@ import "server-only";
 import { attachDatabasePool } from "@vercel/functions";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import { strictSsl } from "./connection-string";
 import * as schema from "./schema";
 
 function connect() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL is not set");
   const pool = new Pool({
-    connectionString,
+    connectionString: strictSsl(connectionString),
     // Local pglite-server multiplexes one real connection, so dev runs with 1 to keep each
     // transaction on its own; Neon's pooled endpoint is happy with more.
     max: Number(process.env.DATABASE_POOL_MAX ?? 5),

@@ -4,6 +4,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
+import { strictSsl } from "../src/db/connection-string";
 
 const deploy = process.argv.includes("--deploy");
 if (deploy && process.env.VERCEL_ENV !== "production") {
@@ -22,7 +23,7 @@ if (!connectionString) {
   console.error("DATABASE_URL is not set (copy .env.example to .env.local)");
   process.exit(1);
 }
-const pool = new Pool({ connectionString, max: 1 });
+const pool = new Pool({ connectionString: strictSsl(connectionString), max: 1 });
 await migrate(drizzle(pool), { migrationsFolder: "drizzle" });
 await pool.end();
 console.log("migrations applied");

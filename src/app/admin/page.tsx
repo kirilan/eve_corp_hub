@@ -9,12 +9,12 @@ import { getViewer } from "@/lib/auth/viewer";
 import { entityNames } from "@/lib/eve/names";
 import { toggleSuperUser } from "./actions";
 
-export const metadata: Metadata = { title: "Admin" };
+// No title or heading in the static shell: to anyone but a super user this page is an ordinary 404.
+export const metadata: Metadata = {};
 
 export default function AdminPage({ searchParams }: PageProps<"/admin">) {
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-semibold">Admin</h1>
       <Suspense fallback={<p className="text-muted">Loading…</p>}>
         <Admin searchParams={searchParams} />
       </Suspense>
@@ -61,7 +61,6 @@ function detail(entry: AuditEntry): string | null {
 
 async function Admin({ searchParams }: { searchParams: PageProps<"/admin">["searchParams"] }) {
   const viewer = await getViewer();
-  // Not a hint that the page exists: anyone but a super user gets the ordinary 404.
   if (!viewer?.isSuperUser) notFound();
   const { before } = await searchParams;
   const beforeId = typeof before === "string" && /^\d+$/.test(before) ? Number(before) : undefined;
@@ -70,6 +69,7 @@ async function Admin({ searchParams }: { searchParams: PageProps<"/admin">["sear
 
   return (
     <>
+      <h1 className="text-2xl font-semibold">Admin</h1>
       <section className="space-y-3">
         <h2 className="text-lg font-medium">Profiles</h2>
         <p className="text-sm text-muted">

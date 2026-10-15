@@ -4,6 +4,7 @@
 //   pnpm super-user "Character Name"            (or a character id)
 //   pnpm super-user "Character Name" --revoke
 import pg from "pg";
+import { strictSsl } from "../src/db/connection-string";
 
 const args = process.argv.slice(2);
 const revoke = args.includes("--revoke");
@@ -13,7 +14,7 @@ if (!who || !process.env.DATABASE_URL) {
   process.exit(1);
 }
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+const client = new pg.Client({ connectionString: strictSsl(process.env.DATABASE_URL) });
 await client.connect();
 try {
   await client.query("BEGIN");
