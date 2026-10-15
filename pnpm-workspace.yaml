@@ -1,0 +1,26 @@
+allowBuilds:
+  esbuild: true
+  sharp: false
+  unrs-resolver: false
+minimumReleaseAgeExclude:
+  - '@next/env@16.4.1'
+  - '@next/eslint-plugin-next@16.4.1'
+  - '@next/swc-darwin-arm64@16.4.1'
+  - '@next/swc-darwin-x64@16.4.1'
+  - '@next/swc-linux-arm64-gnu@16.4.1'
+  - '@next/swc-linux-arm64-musl@16.4.1'
+  - '@next/swc-linux-x64-gnu@16.4.1'
+  - '@next/swc-linux-x64-musl@16.4.1'
+  - '@next/swc-win32-arm64-msvc@16.4.1'
+  - '@next/swc-win32-x64-msvc@16.4.1'
+  - eslint-config-next@16.4.1
+  - next@16.4.1
+  - '@electric-sql/pglite-age@0.0.11'
+  - '@electric-sql/pglite-pg_hashids@0.0.11'
+  - '@electric-sql/pglite-pg_ivm@0.0.11'
+  - '@electric-sql/pglite-pg_textsearch@0.0.12'
+  - '@electric-sql/pglite-pg_uuidv7@0.0.11'
+  - '@electric-sql/pglite-pgtap@0.0.11'
+  - '@electric-sql/pglite-pgvector@0.0.11'
+  - '@electric-sql/pglite-socket@0.2.13'
+  - '@electric-sql/pglite@0.5.10'
