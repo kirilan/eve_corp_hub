@@ -1,4 +1,4 @@
-# Bano
+# Drydock
 
 A website for storing, sharing and syncing EVE Online ship fittings. Anyone can sign in with
 EVE SSO. What a profile can see follows its **main character's corporation**.

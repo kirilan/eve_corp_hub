@@ -1,1 +1,1 @@
-export const SITE_NAME = "Bano";
+export const SITE_NAME = "Drydock";
