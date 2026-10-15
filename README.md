@@ -68,6 +68,10 @@ normal wire protocol.
    `pnpm dev` is pinned to port 3003 because the EVE callback must match exactly. To use another
    port, change it in `package.json`, in `APP_URL`, and in the EVE application's callback.
 
+   Developing on a remote box: browse to it by name (e.g. `http://ibox:3003`), set `APP_URL` to
+   exactly that, and register `<APP_URL>/auth/callback` in the dev EVE application. The login
+   cookie belongs to the host you browse, so the callback must come back to the same host.
+
 Checks: `pnpm test` (Vitest against a throwaway in-memory PGlite), `pnpm typecheck`, `pnpm lint`,
 `pnpm build`.
 
