@@ -105,7 +105,7 @@ export async function FitDetail({ fit, viewer, shareToken }: { fit: FitRow; view
                 </summary>
                 <form action={removeFit.bind(null, fit.id)} className="absolute z-10 mt-1">
                   <button className="rounded bg-red-700 px-3 py-1.5 text-sm whitespace-nowrap text-white hover:bg-red-600">
-                    Yes, delete {isOwner ? "this fit" : "as super user"}
+                    Yes, delete {isOwner ? "this fit" : "as admin"}
                   </button>
                 </form>
               </details>

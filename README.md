@@ -62,14 +62,22 @@ EVE SSO. What a profile can see follows its **main character's corporation**.
   Purely private fits are not logged. Entries are filed under a corporation (read by that
   corporation's super users) or site-wide (read by every super user). Each entry is written in the
   same transaction as its change. Shown on `/admin`.
-- **Super users**: a per-profile flag. Super users manage their main corporation's doctrines,
-  can take down public fits and fits shared with their corporation (logged as moderation), and
-  grant or revoke the flag on `/admin`. They cannot edit other people's fits. The first one
-  comes from the command line:
+- **Two admin tiers** (rules in `src/lib/permissions.ts`; both shown and managed on `/admin`):
 
-  ```bash
-  pnpm super-user "Character Name"            # or a character id; --revoke to remove
-  ```
+  | | Super user | Corp Director |
+  |---|---|---|
+  | Scope | site-wide flag | one corporation, named in the role |
+  | In effect | always | only while their main is in that corporation |
+  | Doctrines | their main's corporation | their corporation |
+  | Take down corporation-shared fits | of their main's corporation | of their corporation |
+  | Take down public fits | any | those whose owner's main is in their corporation |
+  | Profiles listed on `/admin` | all | their corporation's |
+  | Audit log | their corporation's + site-wide | their corporation's |
+  | Appoint/revoke Corp Directors | anyone (in the target's current corporation) | within their corporation |
+  | Grant/revoke super user | yes | no |
+
+  Nobody can change their own roles, and neither tier can edit other people's fits. The first
+  super user is made in the database (see Deployment); after that, everything goes through `/admin`.
 
 - **Doctrines**: named sets of fits a corporation flies together, at `/doctrines`. Members of
   the corporation see them and can send all of a doctrine's fits to a character in one go. Only

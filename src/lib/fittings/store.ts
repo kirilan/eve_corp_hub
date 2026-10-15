@@ -175,7 +175,13 @@ export async function deleteFitting(viewer: Viewer, id: string): Promise<void> {
   if (!z.uuid().safeParse(id).success) throw new FittingError("Fit not found.");
   await db.transaction(async (tx) => {
     const [fit] = await tx.select().from(fittings).where(eq(fittings.id, id)).for("update");
-    if (!fit || !canDeleteFitting(viewer, fit)) throw new FittingError("Fit not found.");
+    if (!fit) throw new FittingError("Fit not found.");
+    const [owner] = await tx
+      .select({ corporationId: characters.corporationId })
+      .from(users)
+      .innerJoin(characters, eq(characters.id, users.mainCharacterId))
+      .where(eq(users.id, fit.ownerId));
+    if (!canDeleteFitting(viewer, { ...fit, ownerCorporationId: owner?.corporationId ?? null })) throw new FittingError("Fit not found.");
     await tx.delete(fittings).where(eq(fittings.id, id));
     const scope = fitAuditScope(fit);
     if (scope) {
@@ -255,7 +261,7 @@ export async function copyFitting(viewer: Viewer, id: string, shareToken?: strin
 function fitQuery() {
   // Built per call: `db` connects on first use, and a module-level query would connect at import.
   const mainCharacter = db
-    .select({ userId: characters.userId, id: characters.id, name: characters.name })
+    .select({ userId: characters.userId, id: characters.id, name: characters.name, corporationId: characters.corporationId })
     .from(characters)
     .innerJoin(users, eq(users.mainCharacterId, characters.id))
     .as("main_character");
@@ -275,6 +281,8 @@ function fitQuery() {
       updatedAt: fittings.updatedAt,
       ownerMainId: mainCharacter.id,
       ownerMainName: mainCharacter.name,
+      // Where the owner's main is now: decides which Corp Director may moderate the owner's public fits.
+      ownerCorporationId: mainCharacter.corporationId,
     })
     .from(fittings)
     .leftJoin(eveTypes, eq(eveTypes.id, fittings.shipTypeId))

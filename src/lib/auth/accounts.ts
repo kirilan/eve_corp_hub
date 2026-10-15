@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { characters, users, type Character } from "@/db/schema";
+import { type Character, characters, corporationDirectors, users } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { affiliations, type Affiliation } from "@/lib/eve/esi";
 import { revokeRefreshToken, type TokenResponse, type VerifiedCharacter } from "@/lib/eve/sso";
@@ -182,6 +182,8 @@ export async function refreshAffiliations(userId: string): Promise<void> {
 export type Viewer = {
   userId: string;
   isSuperUser: boolean;
+  // Corporations this profile holds a Corp Director role for; effective only for the main's corporation.
+  directorOf: number[];
   main: { id: number; name: string; corporationId: number | null; allianceId: number | null } | null;
 };
 
@@ -199,9 +201,14 @@ export async function loadViewer(userId: string): Promise<Viewer | null> {
     .leftJoin(characters, and(eq(characters.id, users.mainCharacterId), eq(characters.userId, users.id)))
     .where(eq(users.id, userId));
   if (!row) return null;
+  const roles = await db
+    .select({ corporationId: corporationDirectors.corporationId })
+    .from(corporationDirectors)
+    .where(eq(corporationDirectors.userId, userId));
   return {
     userId: row.userId,
     isSuperUser: row.isSuperUser,
+    directorOf: roles.map((role) => role.corporationId),
     main:
       row.mainId === null
         ? null

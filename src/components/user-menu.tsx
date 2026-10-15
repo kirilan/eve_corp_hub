@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { getViewer } from "@/lib/auth/viewer";
 import { portraitUrl } from "@/lib/eve/names";
+import { canAdminister } from "@/lib/permissions";
 import { SignInButton } from "./sign-in-button";
 
 export async function UserMenu() {
@@ -22,7 +23,7 @@ export async function UserMenu() {
           <span className="text-sm">{viewer.main.name}</span>
         </>
       )}
-      {viewer.isSuperUser && (
+      {canAdminister(viewer) && (
         <Link href="/admin" className="text-sm text-accent hover:underline">
           Admin
         </Link>

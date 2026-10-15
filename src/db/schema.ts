@@ -116,6 +116,24 @@ export const fittings = pgTable(
 );
 
 /**
+ * Corp Director roles: a profile may manage one corporation with super user powers limited to it.
+ * The role takes effect only while the profile's main character is in that corporation, so leaving
+ * the corp (or switching main elsewhere) suspends it without anyone having to revoke it.
+ */
+export const corporationDirectors = pgTable(
+  "corporation_directors",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    corporationId: eveId("corporation_id").notNull(),
+    grantedBy: uuid("granted_by").references(() => users.id, { onDelete: "set null" }),
+    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.corporationId] }), index("corporation_directors_corporation_idx").on(t.corporationId)],
+);
+
+/**
  * Every saved state of a fit's contents, numbered from 1. Visibility changes are not versions
  * (they are in the audit log); name, description, hull and items are.
  */

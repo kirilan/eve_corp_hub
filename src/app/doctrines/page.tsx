@@ -40,7 +40,7 @@ async function Doctrines() {
       <h2 className="text-sm text-muted">{names[corporationId] ?? "Your corporation"}</h2>
       {doctrines.length === 0 ? (
         <p className="rounded border border-dashed border-border p-6 text-sm text-muted">
-          No doctrines yet.{manager ? " Create the first one below." : " Your corporation's super users can create them."}
+          No doctrines yet.{manager ? " Create the first one below." : " Your corporation's directors and super users can create them."}
         </p>
       ) : (
         <ul className="divide-y divide-border rounded border border-border bg-surface">

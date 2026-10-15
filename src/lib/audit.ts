@@ -3,7 +3,7 @@ import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import { auditLog } from "@/db/schema";
 import type { Viewer } from "@/lib/auth/accounts";
-import { corporationOf } from "@/lib/permissions";
+import { corporationOf, runsCorporation } from "@/lib/permissions";
 
 export type AuditAction =
   | "fit.created"
@@ -17,7 +17,9 @@ export type AuditAction =
   | "doctrine.fit_added"
   | "doctrine.fit_removed"
   | "user.super_granted"
-  | "user.super_revoked";
+  | "user.super_revoked"
+  | "user.director_granted"
+  | "user.director_revoked";
 
 export type AuditRecord = {
   action: AuditAction;
@@ -46,17 +48,21 @@ export function fitAuditScope(fit: { visibility: string; corporationId: number |
 
 const PAGE = 100;
 
-/** Newest first: the viewer's corporation's entries plus site-wide ones. Super users only. */
+/**
+ * Newest first. Whoever runs the viewer's corporation (super user or active Corp Director) reads its
+ * entries; super users also read the site-wide ones. Everyone else gets nothing.
+ */
 export async function readAudit(viewer: Viewer, options: { before?: number; subject?: { type: string; id: string } } = {}) {
-  if (!viewer.isSuperUser) return [];
   const corporationId = corporationOf(viewer);
-  const scope = corporationId === null ? isNull(auditLog.corporationId) : or(isNull(auditLog.corporationId), eq(auditLog.corporationId, corporationId));
+  const ownCorporation = runsCorporation(viewer, corporationId) ? eq(auditLog.corporationId, corporationId!) : undefined;
+  const siteWide = viewer.isSuperUser ? isNull(auditLog.corporationId) : undefined;
+  if (!ownCorporation && !siteWide) return [];
   return db
     .select()
     .from(auditLog)
     .where(
       and(
-        scope,
+        or(ownCorporation, siteWide),
         options.before ? lt(auditLog.id, options.before) : undefined,
         options.subject ? and(eq(auditLog.subjectType, options.subject.type), eq(auditLog.subjectId, options.subject.id)) : undefined,
       ),

@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { Viewer } from "@/lib/auth/accounts";
-import { canDeleteFitting, canEditFitting, canManageDoctrines, canReadAudit, canViewFitting, fitsDoctrine } from "@/lib/permissions";
+import {
+  canAdminister,
+  canDeleteFitting,
+  canEditFitting,
+  canGrantDirector,
+  canGrantSuperUser,
+  canManageDoctrines,
+  canReadAudit,
+  canViewFitting,
+  fitsDoctrine,
+} from "@/lib/permissions";
 
 const CORP = 98000001;
-const viewer = (userId: string, corporationId: number | null, isSuperUser = false): Viewer => ({
+const viewer = (userId: string, corporationId: number | null, isSuperUser = false, directorOf: number[] = []): Viewer => ({
   userId,
   isSuperUser,
+  directorOf,
   main: { id: 1, name: "Pilot", corporationId, allianceId: null },
 });
 
@@ -14,6 +25,9 @@ const corpmate = viewer("corpmate", CORP);
 const outsider = viewer("outsider", 98000002);
 const admin = viewer("admin", 98000002, true);
 const corpAdmin = viewer("corp-admin", CORP, true);
+const director = viewer("director", CORP, false, [CORP]);
+// Director of CORP whose main has moved to another corporation: the role is suspended.
+const awayDirector = viewer("away", 98000002, false, [CORP]);
 
 const fit = (visibility: "private" | "corporation" | "link" | "public") => ({
   ownerId: "owner",
@@ -80,6 +94,42 @@ describe("super user scopes", () => {
     expect(canReadAudit(corpAdmin, null)).toBe(true);
     expect(canReadAudit(admin, CORP)).toBe(false);
     expect(canReadAudit(owner, null)).toBe(false);
+  });
+});
+
+describe("Corp Directors", () => {
+  const publicBy = (ownerCorporationId: number) => ({ ...fit("public"), ownerCorporationId });
+
+  it("run their own corporation like a super user", () => {
+    expect(canAdminister(director)).toBe(true);
+    expect(canManageDoctrines(director, CORP)).toBe(true);
+    expect(canDeleteFitting(director, fit("corporation"))).toBe(true);
+    expect(canReadAudit(director, CORP)).toBe(true);
+  });
+
+  it("stop at their corporation's edge", () => {
+    expect(canManageDoctrines(director, 98000002)).toBe(false);
+    expect(canDeleteFitting(director, publicBy(CORP))).toBe(true);
+    expect(canDeleteFitting(director, publicBy(98000002))).toBe(false);
+    expect(canDeleteFitting(corpAdmin, publicBy(98000002))).toBe(true); // super users moderate all public fits
+    expect(canReadAudit(director, null)).toBe(false); // site-wide entries are super users' only
+    expect(canDeleteFitting(director, fit("private"))).toBe(false);
+    expect(canEditFitting(director, fit("corporation"))).toBe(false);
+  });
+
+  it("lose their powers while their main is in another corporation", () => {
+    expect(canAdminister(awayDirector)).toBe(false);
+    expect(canManageDoctrines(awayDirector, CORP)).toBe(false);
+    expect(canReadAudit(awayDirector, CORP)).toBe(false);
+  });
+
+  it("appoint directors only in their own corporation and never grant super user", () => {
+    expect(canGrantDirector(director, { userId: "x", corporationId: CORP })).toBe(true);
+    expect(canGrantDirector(director, { userId: "x", corporationId: 98000002 })).toBe(false);
+    expect(canGrantDirector(director, { userId: "director", corporationId: CORP })).toBe(false);
+    expect(canGrantDirector(admin, { userId: "x", corporationId: CORP })).toBe(true);
+    expect(canGrantSuperUser(director, "x")).toBe(false);
+    expect(canGrantSuperUser(admin, "x")).toBe(true);
   });
 });
 

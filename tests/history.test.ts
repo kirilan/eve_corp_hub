@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/db";
 import { readAudit } from "@/lib/audit";
 import { completeSignIn, loadViewer, type Viewer } from "@/lib/auth/accounts";
-import { setSuperUser } from "@/lib/auth/super-users";
+import { listProfiles, setDirector, setSuperUser } from "@/lib/auth/super-users";
 import {
   addFitToDoctrine,
   createDoctrine,
@@ -42,7 +42,7 @@ let boss: Viewer; // super user in CORP_A
 let foreignBoss: Viewer; // super user in CORP_B
 
 beforeEach(async () => {
-  await db.execute(sql`TRUNCATE users, characters, sessions, fittings, doctrines, audit_log CASCADE`);
+  await db.execute(sql`TRUNCATE users, characters, sessions, fittings, doctrines, audit_log, corporation_directors CASCADE`);
   owner = await profile(1, CORP_A);
   member = await profile(2, CORP_A);
   boss = await profile(3, CORP_A, true);
@@ -141,5 +141,49 @@ describe("doctrines", () => {
     await deleteDoctrine(boss, doctrine);
     const actions = (await readAudit(boss)).filter((e) => e.subjectType === "doctrine").map((e) => e.action);
     expect(actions).toEqual(["doctrine.deleted", "doctrine.fit_removed", "doctrine.fit_added", "doctrine.created"]);
+  });
+});
+
+describe("Corp Director role", () => {
+  it("is granted for the target's current corporation and acts within it", async () => {
+    await setDirector(boss, member.userId, CORP_A, true);
+    const director = (await loadViewer(member.userId))!;
+    expect(director.directorOf).toEqual([CORP_A]);
+
+    // Doctrines and corp-fit moderation in their own corporation...
+    const doctrine = await createDoctrine(director, { name: "Directors pick" });
+    const shared = await createFitting(owner, { eft: RIFTER_EFT, visibility: "corporation" });
+    await addFitToDoctrine(director, doctrine, shared.id);
+    await deleteFitting(director, shared.id);
+
+    // ...their corporation's audit log, but not site-wide entries...
+    const actions = (await readAudit(director)).map((e) => e.action);
+    expect(actions).toContain("user.director_granted");
+    expect(actions).toContain("fit.deleted");
+    await setSuperUser(boss, owner.userId, true);
+    expect((await readAudit(director)).map((e) => e.action)).not.toContain("user.super_granted");
+
+    // ...and only their corporation's profiles.
+    expect((await listProfiles(director)).map((p) => p.mainName).sort()).toEqual(["Pilot 1", "Pilot 2", "Pilot 3"]);
+  });
+
+  it("appoints within its corporation only and cannot touch super users or itself", async () => {
+    await setDirector(boss, member.userId, CORP_A, true);
+    const director = (await loadViewer(member.userId))!;
+    await setDirector(director, owner.userId, CORP_A, true);
+    await expect(setDirector(director, foreignBoss.userId, CORP_B, true)).rejects.toThrow(/own corporation/);
+    await expect(setDirector(director, member.userId, CORP_A, false)).rejects.toThrow(/your own role/);
+    await expect(setSuperUser(director, owner.userId, true)).rejects.toThrow(/Only super users/);
+    await expect(setDirector(boss, owner.userId, CORP_B, true)).rejects.toThrow(/main is in/);
+  });
+
+  it("does not let a foreign corporation's public fits be moderated", async () => {
+    await setDirector(foreignBoss, member.userId, CORP_A, true);
+    const director = (await loadViewer(member.userId))!;
+    const foreign = await profile(5, CORP_B);
+    const theirs = await createFitting(foreign, { eft: RIFTER_EFT, visibility: "public" });
+    const ours = await createFitting(owner, { eft: RIFTER_EFT, visibility: "public" });
+    await expect(deleteFitting(director, theirs.id)).rejects.toBeInstanceOf(FittingError);
+    await deleteFitting(director, ours.id);
   });
 });

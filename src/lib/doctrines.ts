@@ -53,7 +53,7 @@ export async function doctrineWithFits(viewer: Viewer | null, id: string) {
 }
 
 function requireManager(viewer: Viewer, corporationId?: number) {
-  if (!canManageDoctrines(viewer, corporationId)) throw new FittingError("Only super users of this corporation manage its doctrines.");
+  if (!canManageDoctrines(viewer, corporationId)) throw new FittingError("Only this corporation's directors and super users manage its doctrines.");
 }
 
 export async function createDoctrine(viewer: Viewer, input: DoctrineInput): Promise<string> {
