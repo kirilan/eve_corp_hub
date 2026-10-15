@@ -1,6 +1,7 @@
 import "server-only";
 import { and, eq, gt } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 import { cache } from "react";
 import { db } from "@/db";
 import { sessions } from "@/db/schema";
@@ -41,6 +42,9 @@ export async function endSession(): Promise<void> {
 export const currentUserId = cache(async (): Promise<string | null> => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
+  // Session checks compare against the clock, and everything downstream (affiliation refresh, the
+  // viewer's data) is per-request too: tell Cache Components to stop prerendering here.
+  await connection();
   const [row] = await db
     .select({ userId: sessions.userId })
     .from(sessions)
