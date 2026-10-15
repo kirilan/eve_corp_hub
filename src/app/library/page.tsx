@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { FitList } from "@/components/fittings/fit-list";
+import { FitCollection } from "@/components/fittings/fit-collection";
 import { SearchBox } from "@/components/fittings/search-box";
 import { getViewer } from "@/lib/auth/viewer";
 import { entityNames } from "@/lib/eve/names";
@@ -46,8 +46,9 @@ async function Library({ searchParams }: { searchParams: PageProps<"/library">["
         {tab("public", "Public")}
       </nav>
       <SearchBox defaultValue={query} hidden={{ scope }} />
-      <FitList
+      <FitCollection
         fits={fits}
+        viewer={viewer}
         showOwner
         empty={
           query

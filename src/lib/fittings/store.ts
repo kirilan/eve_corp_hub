@@ -6,7 +6,7 @@ import { characters, eveTypes, fittings, users, type Fitting, type FittingItem }
 import type { Viewer } from "@/lib/auth/accounts";
 import { characterAccessToken } from "@/lib/auth/tokens";
 import { randomToken } from "@/lib/crypto";
-import { esi } from "@/lib/eve/esi";
+import { esi, EsiError } from "@/lib/eve/esi";
 import { typesById, typesByName } from "@/lib/eve/types";
 import { canDeleteFitting, canEditFitting, canShareWithCorporation, canViewFitting, corporationOf } from "@/lib/permissions";
 import { buildFit, EftError, fitSignature, namesIn, parseEft } from "./eft";
@@ -244,4 +244,51 @@ export async function sendToGame(viewer: Viewer, id: string, characterId: number
     token,
     body: { name: fit.name.slice(0, 50), description: fit.description.slice(0, 500), ship_type_id: fit.shipTypeId, items: fit.items },
   });
+}
+
+// Sends run one after another inside a single request; this keeps a run well inside a serverless
+// function's time limit (each ESI write takes a few hundred milliseconds).
+export const BULK_SEND_LIMIT = 50;
+
+export type BulkSendResult = { id: string; name: string; status: "sent" | "skipped" | "failed"; detail?: string };
+
+/**
+ * Sends several fits to one character. Fits already saved on the character (same contents, any
+ * slot numbers) are skipped, so re-running after a partial failure only sends what is missing.
+ * A failure on one fit does not stop the rest, except when the character's access itself is gone.
+ */
+export async function sendManyToGame(viewer: Viewer, ids: string[], characterId: number): Promise<BulkSendResult[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) throw new FittingError("Select at least one fit.");
+  if (unique.length > BULK_SEND_LIMIT) throw new FittingError(`Send at most ${BULK_SEND_LIMIT} fits at a time.`);
+
+  const fits = (await Promise.all(unique.map((id) => viewableFitting(viewer, id)))).filter((fit) => fit !== null);
+  const token = await characterAccessToken(viewer.userId, characterId, "fittings");
+  const inGame = new Set(
+    (await esi<GameFitting[]>(`/characters/${characterId}/fittings`, { token })).map((fit) => fitSignature(fit.ship_type_id, fit.items)),
+  );
+
+  const results: BulkSendResult[] = [];
+  for (const fit of fits) {
+    const signature = fitSignature(fit.shipTypeId, fit.items);
+    if (inGame.has(signature)) {
+      results.push({ id: fit.id, name: fit.name, status: "skipped", detail: "already saved on this character" });
+      continue;
+    }
+    try {
+      await esi(`/characters/${characterId}/fittings`, {
+        method: "POST",
+        token,
+        body: { name: fit.name.slice(0, 50), description: fit.description.slice(0, 500), ship_type_id: fit.shipTypeId, items: fit.items },
+      });
+      inGame.add(signature);
+      results.push({ id: fit.id, name: fit.name, status: "sent" });
+    } catch (error) {
+      if (!(error instanceof EsiError)) throw error;
+      results.push({ id: fit.id, name: fit.name, status: "failed", detail: error.message });
+      // A rejected token fails every remaining send the same way; report it once and stop.
+      if (error.status === 401 || error.status === 403) break;
+    }
+  }
+  return results;
 }

@@ -4,7 +4,7 @@ import { typeNames } from "@/lib/eve/types";
 import { sectionsOf, toEft, type SlotKind } from "@/lib/fittings/eft";
 import type { FitRow } from "@/lib/fittings/store";
 import { CopyButton } from "./copy-button";
-import { typeIconUrl } from "./fit-list";
+import { typeIconUrl } from "@/lib/eve/images";
 
 const SLOT_LABEL: Record<SlotKind, string> = {
   hi: "High slots",

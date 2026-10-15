@@ -38,7 +38,11 @@ EVE SSO. What a profile can see follows its **main character's corporation**.
   charges are dropped with a warning, because EVE fittings keep charges in cargo.
 - **Import from game**: lists the fits saved on a character that allows fitting sync, and marks
   ones already in your collection. Slot numbers are ignored when comparing.
-- **Send to game**: writes any fit you can see to one of your characters' saved fittings.
+- **Send to game**: writes any fit you can see to one of your characters' saved fittings. On
+  *My fittings* and the *Library*, tick several fits (or *Select all* after a search) to send up to
+  50 at once. Fits already on the character are skipped, so re-running after a failure only sends
+  what is missing. ESI has no corporation fittings endpoints: to fill in-game corp fittings, send
+  to a fitting manager's character and save them as corp fits in game.
 - **Library**: fits shared with your main's corporation, plus the public library. *Save a copy*
   turns any visible fit into a private one of your own.
 - Names (50 chars) and descriptions (500) are capped at EVE's limits, so every stored fit can be

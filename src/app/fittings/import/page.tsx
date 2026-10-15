@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { Suspense } from "react";
-import { typeIconUrl } from "@/components/fittings/fit-list";
+import { typeIconUrl } from "@/lib/eve/images";
 import { SignInButton } from "@/components/sign-in-button";
 import { listCharacters } from "@/lib/auth/accounts";
 import { ConsentMissingError } from "@/lib/auth/tokens";

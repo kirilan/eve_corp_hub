@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { FitList } from "@/components/fittings/fit-list";
+import { FitCollection } from "@/components/fittings/fit-collection";
 import { SearchBox } from "@/components/fittings/search-box";
 import { Notice } from "@/components/notice";
 import { SignInButton } from "@/components/sign-in-button";
@@ -41,8 +41,9 @@ async function Fits({ searchParams }: { searchParams: PageProps<"/fittings">["se
   return (
     <div className="space-y-4">
       <SearchBox defaultValue={query} />
-      <FitList
+      <FitCollection
         fits={fits}
+        viewer={viewer}
         empty={query ? "No fits match that search." : "No fits yet. Paste one with New fit, or import the fits saved on your characters."}
       />
     </div>

@@ -1,11 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
+import { typeIconUrl } from "@/lib/eve/images";
 import type { FitRow } from "@/lib/fittings/store";
 import { VisibilityBadge } from "./visibility-badge";
-
-export function typeIconUrl(typeId: number, size: 32 | 64 = 32) {
-  return `https://images.evetech.net/types/${typeId}/icon?size=${size}`;
-}
 
 export function FitList({ fits, showOwner = false, empty }: { fits: FitRow[]; showOwner?: boolean; empty: React.ReactNode }) {
   if (fits.length === 0) return <div className="rounded border border-dashed border-border p-6 text-sm text-muted">{empty}</div>;

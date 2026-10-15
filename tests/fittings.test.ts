@@ -12,11 +12,13 @@ import {
   importGameFittings,
   listLibrary,
   listOwnFittings,
+  sendManyToGame,
   sendToGame,
   setVisibility,
   updateFitting,
   viewableFitting,
 } from "@/lib/fittings/store";
+import { EsiError } from "@/lib/eve/esi";
 import { BY_ID, BY_NAME, RIFTER_EFT } from "./fixtures/types";
 
 vi.mock("@/lib/eve/types", () => ({
@@ -25,7 +27,11 @@ vi.mock("@/lib/eve/types", () => ({
 }));
 vi.mock("@/lib/auth/tokens", () => ({ characterAccessToken: vi.fn(async () => "token") }));
 const esi = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/eve/esi", () => ({ esi, affiliations: vi.fn(async () => []) }));
+vi.mock("@/lib/eve/esi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/eve/esi")>()),
+  esi,
+  affiliations: vi.fn(async () => []),
+}));
 
 const CORP_A = 98000001;
 const CORP_B = 98000002;
@@ -168,5 +174,45 @@ describe("in-game fittings", () => {
     expect(init).toMatchObject({ method: "POST", token: "token", body: { name: "Fast tackle", ship_type_id: 587 } });
     expect(init.body.items).toHaveLength(10);
     await expect(sendToGame(outsider, id, 3)).rejects.toBeInstanceOf(FittingError);
+  });
+});
+
+describe("bulk send", () => {
+  const second = "[Rifter, Brawler]\nDamage Control II\n";
+
+  it("skips fits already on the character, sends the rest, and keeps going past a failure", async () => {
+    const a = await createFitting(owner, { eft: RIFTER_EFT });
+    const b = await createFitting(owner, { eft: second });
+    const c = await createFitting(owner, { eft: "[Rifter, Webber]\nStasis Webifier II\n" });
+    // In game already: fit b's contents, under other slot numbers.
+    esi.mockImplementation(async (_path: string, init?: { method?: string; body?: { name: string } }) => {
+      if (!init?.method) return [{ fitting_id: 1, name: "old", description: "", ship_type_id: 587, items: [{ type_id: 2048, flag: "LoSlot4", quantity: 1 }] }];
+      if (init.body?.name === "Webber") throw new EsiError("too many fittings", 400);
+      return { fitting_id: 9 };
+    });
+
+    const results = await sendManyToGame(owner, [a.id, b.id, c.id, a.id], 1);
+    expect(results.map((r) => [r.name, r.status])).toEqual([
+      ["Fast tackle", "sent"],
+      ["Brawler", "skipped"],
+      ["Webber", "failed"],
+    ]);
+  });
+
+  it("stops at the first rejected token instead of failing every fit", async () => {
+    const a = await createFitting(owner, { eft: RIFTER_EFT });
+    const b = await createFitting(owner, { eft: second });
+    esi.mockImplementation(async (_path: string, init?: { method?: string }) => {
+      if (!init?.method) return [];
+      throw new EsiError("token not valid", 403);
+    });
+    expect(await sendManyToGame(owner, [a.id, b.id], 1)).toHaveLength(1);
+  });
+
+  it("only sends fits the viewer can see", async () => {
+    const hidden = await createFitting(owner, { eft: RIFTER_EFT });
+    esi.mockResolvedValue([]);
+    expect(await sendManyToGame(outsider, [hidden.id], 3)).toEqual([]);
+    expect(esi.mock.calls.every(([, init]) => !init?.method)).toBe(true);
   });
 });

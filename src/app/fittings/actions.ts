@@ -12,10 +12,12 @@ import {
   deleteFitting,
   FittingError,
   importGameFittings,
+  sendManyToGame,
   sendToGame,
   setVisibility,
   updateFitting,
   VISIBILITIES,
+  type BulkSendResult,
   type Visibility,
 } from "@/lib/fittings/store";
 import { z } from "zod";
@@ -98,4 +100,17 @@ export async function importFits(characterId: number, form: FormData) {
   const ids = form.getAll("fitting").map(Number).filter(Number.isSafeInteger);
   const count = await importGameFittings(viewer, characterId, ids);
   redirect(`/fittings?notice=fits-imported&count=${count}`);
+}
+
+export type BulkState = { error?: string; results?: BulkSendResult[] };
+
+export async function bulkSend(_: BulkState, form: FormData): Promise<BulkState> {
+  const viewer = await requireViewer();
+  const ids = form.getAll("fit").map(String);
+  const characterId = Number(form.get("character"));
+  try {
+    return { results: await sendManyToGame(viewer, ids, characterId) };
+  } catch (error) {
+    return { error: userMessage(error) };
+  }
 }
