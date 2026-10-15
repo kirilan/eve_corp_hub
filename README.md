@@ -52,7 +52,7 @@ Needs Node 24 and pnpm. No Docker: the database is PGlite, an embedded Postgres 
 normal wire protocol.
 
 1. Register a **development** application at https://developers.eveonline.com/applications:
-   - callback URL `http://localhost:3000/auth/callback`
+   - callback URL `http://localhost:3003/auth/callback`
    - scopes `esi-fittings.read_fittings.v1` and `esi-fittings.write_fittings.v1`
 2. `cp .env.example .env.local`, then fill in the client id/secret, an encryption key
    (`openssl rand -base64 32`) and `ESI_CONTACT`.
@@ -62,11 +62,11 @@ normal wire protocol.
    pnpm install
    pnpm db:dev        # terminal 1: PGlite on 127.0.0.1:54329, data in .data/
    pnpm db:migrate    # once, and after every new migration
-   pnpm dev           # terminal 2: http://localhost:3000
+   pnpm dev           # terminal 2: http://localhost:3003
    ```
 
-   If port 3000 is busy, Next picks another port, and the EVE callback will not match. Run
-   `pnpm dev -p <port>` and set `APP_URL` and the EVE application's callback to that port.
+   `pnpm dev` is pinned to port 3003 because the EVE callback must match exactly. To use another
+   port, change it in `package.json`, in `APP_URL`, and in the EVE application's callback.
 
 Checks: `pnpm test` (Vitest against a throwaway in-memory PGlite), `pnpm typecheck`, `pnpm lint`,
 `pnpm build`.

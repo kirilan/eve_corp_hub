@@ -19,7 +19,7 @@ type EsiInit = { method?: "GET" | "POST" | "DELETE"; body?: unknown; token?: str
 export async function esi<T>(path: string, init: EsiInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
-    "User-Agent": `bano_web (${env().ESI_CONTACT})`,
+    "User-Agent": `eve_corp_hub (${env().ESI_CONTACT})`,
     "X-Compatibility-Date": COMPAT_DATE,
   };
   if (init.token) headers.Authorization = `Bearer ${init.token}`;
