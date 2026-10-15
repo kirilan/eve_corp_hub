@@ -12,7 +12,8 @@
     "db:dev": "pglite-server --db=./.data/pglite --port=54329",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate.mts",
-    "super-user": "tsx --env-file-if-exists=.env.local scripts/super-user.mts"
+    "super-user": "tsx --env-file-if-exists=.env.local scripts/super-user.mts",
+    "vercel-build": "tsx scripts/migrate.mts --deploy && next build"
   },
   "dependencies": {
     "@vercel/functions": "3.10.1",
@@ -41,5 +42,8 @@
     "typescript": "^5",
     "vitest": "5.0.4"
   },
-  "packageManager": "pnpm@12.10.1"
+  "packageManager": "pnpm@12.10.1",
+  "engines": {
+    "node": "24.x"
+  }
 }

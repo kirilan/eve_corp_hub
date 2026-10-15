@@ -135,14 +135,28 @@ the generated SQL.
 
 ## Deployment (Vercel + Neon)
 
-1. Import the GitHub repository in Vercel.
-2. Add Neon from the Vercel Marketplace. Use its **pooled** connection string as `DATABASE_URL`,
-   and set `DATABASE_POOL_MAX` to around 5.
-3. Register a **production** EVE application with callback `https://<your-domain>/auth/callback`,
-   and set `APP_URL`, `EVE_CLIENT_ID`, `EVE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` and
-   `ESI_CONTACT`.
-4. Run `pnpm db:migrate` against the production database (with `DATABASE_URL` exported) before
-   deploying a migration.
+Configured in `vercel.json`: functions run in Frankfurt (`fra1`), and the build command
+`pnpm vercel-build` applies migrations before `next build`. Only production builds migrate.
+Preview builds skip it, so a branch can never change the production schema.
+
+1. Import `kirilan/eve_corp_hub` in Vercel (Hobby plan). Add the environment variable
+   `ENABLE_EXPERIMENTAL_COREPACK=1`, so Vercel uses the pnpm version pinned in `package.json`
+   (12) rather than its default (10).
+2. Storage → add **Neon** from the Marketplace, region **Frankfurt (aws-eu-central-1)**, connected
+   to this project. It provides `DATABASE_URL` (pooled, used by the app) and
+   `DATABASE_URL_UNPOOLED` (used for migrations).
+3. Register a **production** EVE application with callback
+   `https://<production domain>/auth/callback` and the two `esi-fittings` scopes.
+4. Set for Production: `APP_URL` (`https://<production domain>`), `EVE_CLIENT_ID`,
+   `EVE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` (a new `openssl rand -base64 32`; never reuse the
+   dev key), `ESI_CONTACT`.
+5. Redeploy. Log in once on the site, then grant the first super user against the production
+   database:
+
+   ```bash
+   # .env.production.local (git-ignored) holding DATABASE_URL=<Neon connection string>
+   pnpm exec tsx --env-file=.env.production.local scripts/super-user.mts "Character Name"
+   ```
 
 EVE SSO only redirects to registered callback URLs, and Vercel preview deployments get a new URL
 each time. So login works on production and locally, but not on preview deployments.
