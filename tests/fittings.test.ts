@@ -63,7 +63,7 @@ let corpmate: Viewer;
 let outsider: Viewer;
 
 beforeEach(async () => {
-  await db.execute(sql`TRUNCATE users, characters, sessions, fittings CASCADE`);
+  await db.execute(sql`TRUNCATE users, characters, sessions, fittings, doctrines, audit_log CASCADE`);
   esi.mockReset();
   owner = await profile(1, CORP_A, [11]);
   corpmate = await profile(2, CORP_A);

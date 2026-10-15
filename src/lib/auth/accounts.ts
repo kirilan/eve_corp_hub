@@ -181,7 +181,7 @@ export async function refreshAffiliations(userId: string): Promise<void> {
 
 export type Viewer = {
   userId: string;
-  isAdmin: boolean;
+  isSuperUser: boolean;
   main: { id: number; name: string; corporationId: number | null; allianceId: number | null } | null;
 };
 
@@ -189,7 +189,7 @@ export async function loadViewer(userId: string): Promise<Viewer | null> {
   const [row] = await db
     .select({
       userId: users.id,
-      isAdmin: users.isAdmin,
+      isSuperUser: users.isSuperUser,
       mainId: characters.id,
       mainName: characters.name,
       corporationId: characters.corporationId,
@@ -201,7 +201,7 @@ export async function loadViewer(userId: string): Promise<Viewer | null> {
   if (!row) return null;
   return {
     userId: row.userId,
-    isAdmin: row.isAdmin,
+    isSuperUser: row.isSuperUser,
     main:
       row.mainId === null
         ? null

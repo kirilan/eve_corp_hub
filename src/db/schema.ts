@@ -3,11 +3,13 @@ import {
   bigint,
   boolean,
   check,
+  bigserial,
   index,
   integer,
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -29,7 +31,8 @@ export const users = pgTable("users", {
   // same transaction. Not a foreign key: characters already reference users, and a cycle would
   // need deferred constraints for no gain - the application keeps it pointing at an own character.
   mainCharacterId: eveId("main_character_id"),
-  isAdmin: boolean("is_admin").notNull().default(false),
+  // Trusted profiles: manage their corporation's doctrines, moderate shared fits, grant this flag.
+  isSuperUser: boolean("is_super_user").notNull().default(false),
   createdAt: createdAt(),
 });
 
@@ -112,6 +115,86 @@ export const fittings = pgTable(
   ],
 );
 
+/**
+ * Every saved state of a fit's contents, numbered from 1. Visibility changes are not versions
+ * (they are in the audit log); name, description, hull and items are.
+ */
+export const fittingVersions = pgTable(
+  "fitting_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    fittingId: uuid("fitting_id")
+      .notNull()
+      .references(() => fittings.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    shipTypeId: eveId("ship_type_id").notNull(),
+    items: jsonb("items").$type<FittingItem[]>().notNull(),
+    // How the version came to be: "created", "edited", "imported", "copied", "restored".
+    source: text("source").notNull(),
+    editorId: uuid("editor_id").references(() => users.id, { onDelete: "set null" }),
+    // The editor's main at the time: survives main switches, unlinks and deleted profiles.
+    editorName: text("editor_name"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("fitting_versions_fitting_version_idx").on(t.fittingId, t.version)],
+);
+
+/**
+ * Who changed what, for everything shared: corporation/link/public fits, doctrines, super user
+ * grants. Purely private fits are left out on purpose. `corporationId` scopes who may read an
+ * entry (that corporation's super users); null means site-wide (every super user).
+ */
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
+    actorName: text("actor_name"),
+    action: text("action").notNull(),
+    subjectType: text("subject_type").notNull(),
+    subjectId: text("subject_id").notNull(),
+    // Human-readable label of the subject at the time (fit or doctrine name, profile's main name).
+    subjectName: text("subject_name").notNull(),
+    corporationId: eveId("corporation_id"),
+    details: jsonb("details").$type<Record<string, unknown>>().notNull().default({}),
+  },
+  (t) => [
+    index("audit_log_corporation_at_idx").on(t.corporationId, t.at),
+    index("audit_log_subject_idx").on(t.subjectType, t.subjectId),
+  ],
+);
+
+/** A named set of fits a corporation flies together, maintained by that corporation's super users. */
+export const doctrines = pgTable(
+  "doctrines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    corporationId: eveId("corporation_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("doctrines_corporation_idx").on(t.corporationId)],
+);
+
+export const doctrineFittings = pgTable(
+  "doctrine_fittings",
+  {
+    doctrineId: uuid("doctrine_id")
+      .notNull()
+      .references(() => doctrines.id, { onDelete: "cascade" }),
+    fittingId: uuid("fitting_id")
+      .notNull()
+      .references(() => fittings.id, { onDelete: "cascade" }),
+    addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.doctrineId, t.fittingId] }), index("doctrine_fittings_fitting_idx").on(t.fittingId)],
+);
+
 /** Type names and slot kinds, fetched from ESI on first use and kept: they change only with game patches. */
 export const eveTypes = pgTable("eve_types", {
   id: eveId("id").primaryKey(),
@@ -126,3 +209,6 @@ export const eveTypes = pgTable("eve_types", {
 export type User = typeof users.$inferSelect;
 export type Character = typeof characters.$inferSelect;
 export type Fitting = typeof fittings.$inferSelect;
+export type FittingVersion = typeof fittingVersions.$inferSelect;
+export type AuditEntry = typeof auditLog.$inferSelect;
+export type Doctrine = typeof doctrines.$inferSelect;

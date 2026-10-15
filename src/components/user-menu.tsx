@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { getViewer } from "@/lib/auth/viewer";
 import { portraitUrl } from "@/lib/eve/names";
 import { SignInButton } from "./sign-in-button";
@@ -20,6 +21,11 @@ export async function UserMenu() {
           />
           <span className="text-sm">{viewer.main.name}</span>
         </>
+      )}
+      {viewer.isSuperUser && (
+        <Link href="/admin" className="text-sm text-accent hover:underline">
+          Admin
+        </Link>
       )}
       <form action="/auth/logout" method="post">
         <button className="text-sm text-muted hover:text-foreground">Sign out</button>

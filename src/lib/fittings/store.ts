@@ -1,8 +1,9 @@
 import "server-only";
-import { and, desc, eq, ilike, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, max, or, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "@/db";
-import { characters, eveTypes, fittings, users, type Fitting, type FittingItem } from "@/db/schema";
+import { db, type Tx } from "@/db";
+import { characters, eveTypes, fittings, fittingVersions, users, type Fitting, type FittingItem } from "@/db/schema";
+import { audit, fitAuditScope } from "@/lib/audit";
 import type { Viewer } from "@/lib/auth/accounts";
 import { characterAccessToken } from "@/lib/auth/tokens";
 import { randomToken } from "@/lib/crypto";
@@ -53,59 +54,182 @@ async function fitFromEft(eft: string, nameOverride: string | undefined) {
   }
 }
 
+type Contents = Pick<Fitting, "name" | "description" | "shipTypeId" | "items">;
+type VersionSource = "created" | "edited" | "imported" | "copied" | "restored";
+
+/** Appends the next version of a fit's contents; the caller holds the fit row (or just created it). */
+async function writeVersion(tx: Tx, viewer: Viewer, fittingId: string, contents: Contents, source: VersionSource) {
+  const [{ latest }] = await tx
+    .select({ latest: max(fittingVersions.version) })
+    .from(fittingVersions)
+    .where(eq(fittingVersions.fittingId, fittingId));
+  const version = (latest ?? 0) + 1;
+  await tx.insert(fittingVersions).values({
+    fittingId,
+    version,
+    ...contents,
+    source,
+    editorId: viewer.userId,
+    editorName: viewer.main?.name ?? null,
+  });
+  return version;
+}
+
+async function insertFitting(
+  tx: Tx,
+  viewer: Viewer,
+  contents: Contents,
+  share: ReturnType<typeof sharing> | null,
+  source: VersionSource,
+): Promise<string> {
+  const [row] = await tx
+    .insert(fittings)
+    .values({ ownerId: viewer.userId, ...contents, ...(share ?? {}) })
+    .returning({ id: fittings.id, visibility: fittings.visibility, corporationId: fittings.corporationId });
+  await writeVersion(tx, viewer, row.id, contents, source);
+  const scope = fitAuditScope(row);
+  if (scope) {
+    await audit(tx, viewer, { action: "fit.created", subjectType: "fitting", subjectId: row.id, subjectName: contents.name, ...scope, details: { visibility: row.visibility } });
+  }
+  return row.id;
+}
+
 export async function createFitting(viewer: Viewer, input: FitInput): Promise<{ id: string; warnings: string[] }> {
   const data = fitInput.parse(input);
   const fit = await fitFromEft(data.eft, data.name);
-  const [row] = await db
-    .insert(fittings)
-    .values({
-      ownerId: viewer.userId,
-      name: fit.name,
-      description: data.description,
-      shipTypeId: fit.shipTypeId,
-      items: fit.items,
-      ...sharing(viewer, data.visibility),
-    })
-    .returning({ id: fittings.id });
-  return { id: row.id, warnings: fit.warnings };
+  const contents = { name: fit.name, description: data.description, shipTypeId: fit.shipTypeId, items: fit.items };
+  const id = await db.transaction((tx) => insertFitting(tx, viewer, contents, sharing(viewer, data.visibility), "created"));
+  return { id, warnings: fit.warnings };
 }
 
-async function ownFitting(viewer: Viewer, id: string): Promise<Fitting> {
-  const [fit] = await db.select().from(fittings).where(eq(fittings.id, id));
+/** Locks and returns a fit the viewer may edit (owner only). */
+async function lockOwnFitting(tx: Tx, viewer: Viewer, id: string): Promise<Fitting> {
+  if (!z.uuid().safeParse(id).success) throw new FittingError("Fit not found.");
+  const [fit] = await tx.select().from(fittings).where(eq(fittings.id, id)).for("update");
   if (!fit || !canEditFitting(viewer, fit)) throw new FittingError("Fit not found.");
   return fit;
 }
 
+// Field by field: jsonb hands objects back with its own key order, so JSON.stringify would differ.
+const itemKey = (item: FittingItem) => `${item.flag}:${item.type_id}:${item.quantity}`;
+
+function sameContents(a: Contents, b: Contents): boolean {
+  return (
+    a.name === b.name &&
+    a.description === b.description &&
+    a.shipTypeId === b.shipTypeId &&
+    a.items.length === b.items.length &&
+    a.items.every((item, index) => itemKey(item) === itemKey(b.items[index]))
+  );
+}
+
+/** Audits a visibility change, filed where the fit is (or was) shared; private-to-private is not audited. */
+async function auditSharing(tx: Tx, viewer: Viewer, before: Fitting, after: { visibility: Visibility; corporationId: number | null }) {
+  if (before.visibility === after.visibility && before.corporationId === after.corporationId) return;
+  const scope = fitAuditScope(after.visibility === "private" ? before : after);
+  if (!scope) return;
+  await audit(tx, viewer, {
+    action: "fit.shared",
+    subjectType: "fitting",
+    subjectId: before.id,
+    subjectName: before.name,
+    ...scope,
+    details: { from: before.visibility, to: after.visibility },
+  });
+}
+
 export async function updateFitting(viewer: Viewer, id: string, input: FitInput): Promise<{ warnings: string[] }> {
   const data = fitInput.parse(input);
-  const current = await ownFitting(viewer, id);
   const fit = await fitFromEft(data.eft, data.name);
-  await db
-    .update(fittings)
-    .set({
-      name: fit.name,
-      description: data.description,
-      shipTypeId: fit.shipTypeId,
-      items: fit.items,
-      updatedAt: new Date(),
-      ...sharing(viewer, data.visibility, current),
-    })
-    .where(eq(fittings.id, id));
+  const contents = { name: fit.name, description: data.description, shipTypeId: fit.shipTypeId, items: fit.items };
+  await db.transaction(async (tx) => {
+    const current = await lockOwnFitting(tx, viewer, id);
+    const share = sharing(viewer, data.visibility, current);
+    const changed = !sameContents(current, contents);
+    await tx
+      .update(fittings)
+      .set({ ...contents, ...share, ...(changed && { updatedAt: new Date() }) })
+      .where(eq(fittings.id, id));
+    if (changed) {
+      const version = await writeVersion(tx, viewer, id, contents, "edited");
+      const scope = fitAuditScope(share.visibility === "private" ? current : share);
+      if (scope) {
+        await audit(tx, viewer, { action: "fit.edited", subjectType: "fitting", subjectId: id, subjectName: contents.name, ...scope, details: { version } });
+      }
+    }
+    await auditSharing(tx, viewer, current, share);
+  });
   return { warnings: fit.warnings };
 }
 
 export async function setVisibility(viewer: Viewer, id: string, visibility: Visibility): Promise<void> {
-  const current = await ownFitting(viewer, id);
-  await db
-    .update(fittings)
-    .set({ ...sharing(viewer, visibility, current), updatedAt: new Date() })
-    .where(eq(fittings.id, id));
+  await db.transaction(async (tx) => {
+    const current = await lockOwnFitting(tx, viewer, id);
+    const share = sharing(viewer, visibility, current);
+    await tx.update(fittings).set(share).where(eq(fittings.id, id));
+    await auditSharing(tx, viewer, current, share);
+  });
 }
 
 export async function deleteFitting(viewer: Viewer, id: string): Promise<void> {
-  const [fit] = await db.select().from(fittings).where(eq(fittings.id, id));
-  if (!fit || !canDeleteFitting(viewer, fit)) throw new FittingError("Fit not found.");
-  await db.delete(fittings).where(eq(fittings.id, id));
+  if (!z.uuid().safeParse(id).success) throw new FittingError("Fit not found.");
+  await db.transaction(async (tx) => {
+    const [fit] = await tx.select().from(fittings).where(eq(fittings.id, id)).for("update");
+    if (!fit || !canDeleteFitting(viewer, fit)) throw new FittingError("Fit not found.");
+    await tx.delete(fittings).where(eq(fittings.id, id));
+    const scope = fitAuditScope(fit);
+    if (scope) {
+      await audit(tx, viewer, {
+        action: "fit.deleted",
+        subjectType: "fitting",
+        subjectId: id,
+        subjectName: fit.name,
+        ...scope,
+        // A super user taking down someone else's fit is moderation; say so in the record.
+        details: { moderated: fit.ownerId !== viewer.userId, visibility: fit.visibility },
+      });
+    }
+  });
+}
+
+/** Makes an earlier version the current contents again, as a new version (history is never rewritten). */
+export async function restoreVersion(viewer: Viewer, id: string, version: number): Promise<number> {
+  return db.transaction(async (tx) => {
+    const current = await lockOwnFitting(tx, viewer, id);
+    const [old] = await tx
+      .select()
+      .from(fittingVersions)
+      .where(and(eq(fittingVersions.fittingId, id), eq(fittingVersions.version, version)));
+    if (!old) throw new FittingError("That version does not exist.");
+    const contents = { name: old.name, description: old.description, shipTypeId: old.shipTypeId, items: old.items };
+    if (sameContents(current, contents)) throw new FittingError("The fit already has those contents.");
+    await tx.update(fittings).set({ ...contents, updatedAt: new Date() }).where(eq(fittings.id, id));
+    const created = await writeVersion(tx, viewer, id, contents, "restored");
+    const scope = fitAuditScope(current);
+    if (scope) {
+      await audit(tx, viewer, {
+        action: "fit.restored",
+        subjectType: "fitting",
+        subjectId: id,
+        subjectName: contents.name,
+        ...scope,
+        details: { restoredFrom: version, version: created },
+      });
+    }
+    return created;
+  });
+}
+
+/** A fit's versions, newest first, for anyone who may see the fit itself. */
+export async function fittingHistory(viewer: Viewer | null, id: string, shareToken?: string) {
+  const fit = await viewableFitting(viewer, id, shareToken);
+  if (!fit) return null;
+  const versions = await db
+    .select()
+    .from(fittingVersions)
+    .where(eq(fittingVersions.fittingId, id))
+    .orderBy(desc(fittingVersions.version));
+  return { fit, versions };
 }
 
 /** The fit, if this viewer may see it; a share token counts for "link" fits. Not-found and forbidden look alike. */
@@ -124,17 +248,8 @@ export async function fittingByShareToken(viewer: Viewer | null, shareToken: str
 export async function copyFitting(viewer: Viewer, id: string, shareToken?: string): Promise<string> {
   const source = await viewableFitting(viewer, id, shareToken);
   if (!source) throw new FittingError("Fit not found.");
-  const [row] = await db
-    .insert(fittings)
-    .values({
-      ownerId: viewer.userId,
-      name: source.name,
-      description: source.description,
-      shipTypeId: source.shipTypeId,
-      items: source.items,
-    })
-    .returning({ id: fittings.id });
-  return row.id;
+  const contents = { name: source.name, description: source.description, shipTypeId: source.shipTypeId, items: source.items };
+  return db.transaction((tx) => insertFitting(tx, viewer, contents, null, "copied"));
 }
 
 function fitQuery() {
@@ -222,16 +337,18 @@ export async function importGameFittings(viewer: Viewer, characterId: number, fi
   const wanted = new Set(fittingIds);
   const chosen = (await gameFittings(viewer, characterId)).filter((fit) => wanted.has(fit.fitting_id) && !fit.alreadySaved);
   if (chosen.length === 0) return 0;
-  await db.insert(fittings).values(
-    chosen.map((fit) => ({
-      ownerId: viewer.userId,
-      name: fit.name,
-      description: fit.description,
-      shipTypeId: fit.ship_type_id,
-      // "Invalid" entries are discarded by the game anyway; keeping them would only fail a later send.
-      items: fit.items.filter((item) => item.flag !== "Invalid"),
-    })),
-  );
+  await db.transaction(async (tx) => {
+    for (const fit of chosen) {
+      const contents = {
+        name: fit.name,
+        description: fit.description,
+        shipTypeId: fit.ship_type_id,
+        // "Invalid" entries are discarded by the game anyway; keeping them would only fail a later send.
+        items: fit.items.filter((item) => item.flag !== "Invalid"),
+      };
+      await insertFitting(tx, viewer, contents, null, "imported");
+    }
+  });
   return chosen.length;
 }
 

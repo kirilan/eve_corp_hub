@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { addToDoctrine, removeFromDoctrine } from "@/app/doctrines/actions";
 import { changeVisibility, copyFit, removeFit } from "@/app/fittings/actions";
+import { doctrinesForFit } from "@/lib/doctrines";
 import { listCharacters, type Viewer } from "@/lib/auth/accounts";
 import { env } from "@/lib/env";
 import { hasFeature } from "@/lib/eve/sso";
@@ -20,6 +22,9 @@ export async function FitDetail({ fit, viewer, shareToken }: { fit: FitRow; view
   const corporationName =
     fit.visibility === "corporation" && fit.corporationId ? (await entityNames([fit.corporationId]))[fit.corporationId] : undefined;
   const shareUrl = fit.visibility === "link" && fit.shareToken ? `${env().APP_URL}/s/${fit.shareToken}` : null;
+  const doctrines = viewer ? await doctrinesForFit(viewer, fit) : [];
+  const inDoctrines = doctrines.filter((d) => d.holds);
+  const addable = doctrines.filter((d) => !d.holds);
 
   return (
     <div className="space-y-8">
@@ -81,6 +86,12 @@ export async function FitDetail({ fit, viewer, shareToken }: { fit: FitRow; view
                 Edit
               </Link>
             )}
+            {/* History is reached by id, which link-only visitors cannot use; they see the current version only. */}
+            {!shareToken && (
+              <Link href={`/fittings/${fit.id}/history`} className="rounded border border-border px-3 py-1.5 text-sm hover:border-accent">
+                History
+              </Link>
+            )}
             {viewer && !isOwner && (
               <form action={copyFit.bind(null, fit.id, shareToken)}>
                 <button className="rounded border border-border px-3 py-1.5 text-sm hover:border-accent">Save a copy</button>
@@ -94,7 +105,7 @@ export async function FitDetail({ fit, viewer, shareToken }: { fit: FitRow; view
                 </summary>
                 <form action={removeFit.bind(null, fit.id)} className="absolute z-10 mt-1">
                   <button className="rounded bg-red-700 px-3 py-1.5 text-sm whitespace-nowrap text-white hover:bg-red-600">
-                    Yes, delete {isOwner ? "this fit" : "as admin"}
+                    Yes, delete {isOwner ? "this fit" : "as super user"}
                   </button>
                 </form>
               </details>
@@ -102,6 +113,40 @@ export async function FitDetail({ fit, viewer, shareToken }: { fit: FitRow; view
           </div>
         </div>
       </div>
+
+      {doctrines.length > 0 && (
+        <div className="space-y-2 rounded border border-border bg-surface p-4 text-sm">
+          <h2 className="font-medium">Doctrines</h2>
+          {inDoctrines.length > 0 && (
+            <ul className="flex flex-wrap gap-2">
+              {inDoctrines.map((doctrine) => (
+                <li key={doctrine.id} className="flex items-center gap-1 rounded border border-border px-2 py-1">
+                  <Link href={`/doctrines/${doctrine.id}`} className="hover:text-accent">
+                    {doctrine.name}
+                  </Link>
+                  <form action={removeFromDoctrine.bind(null, doctrine.id, fit.id)}>
+                    <button className="text-muted hover:text-red-300" aria-label={`Remove from ${doctrine.name}`}>
+                      ×
+                    </button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+          {addable.length > 0 && (
+            <form action={addToDoctrine.bind(null, fit.id)} className="flex flex-wrap items-center gap-2">
+              <select name="doctrine" className="rounded border border-border bg-background px-2 py-1.5">
+                {addable.map((doctrine) => (
+                  <option key={doctrine.id} value={doctrine.id}>
+                    {doctrine.name}
+                  </option>
+                ))}
+              </select>
+              <button className="rounded border border-border px-3 py-1.5 hover:border-accent">Add to doctrine</button>
+            </form>
+          )}
+        </div>
+      )}
 
       <FitView fit={fit} />
     </div>

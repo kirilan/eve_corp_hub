@@ -8,6 +8,20 @@
       "when": 1792061370794,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792068915684,
+      "tag": "0001_history_audit_doctrines",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792068916439,
+      "tag": "0002_drop_is_admin",
+      "breakpoints": true
     }
   ]
 }

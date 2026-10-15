@@ -49,6 +49,33 @@ EVE SSO. What a profile can see follows its **main character's corporation**.
   sent to the game.
 - Type names and slots come from ESI on first sight and are cached in `eve_types`.
 
+## History, audit log, doctrines, super users
+
+- **Version history**: every change to a fit's contents (name, description, hull, items) is a
+  numbered version: *created*, *edited*, *imported*, *copied* or *restored*. Saving without
+  changes adds nothing. *History* on a fit lists the versions, newest first, with who saved each
+  one, what changed (`+ 1 Damage Control II (low)`), and that version's EFT. Anyone who can see
+  the fit can see its history. The owner can restore an old version, which is saved as a new
+  version, so history is never rewritten.
+- **Audit log**: who changed what, for everything shared: corporation, link and public fits
+  (created, edited, sharing changed, restored, deleted), doctrines, and super user grants.
+  Purely private fits are not logged. Entries are filed under a corporation (read by that
+  corporation's super users) or site-wide (read by every super user). Each entry is written in the
+  same transaction as its change. Shown on `/admin`.
+- **Super users**: a per-profile flag. Super users manage their main corporation's doctrines,
+  can take down public fits and fits shared with their corporation (logged as moderation), and
+  grant or revoke the flag on `/admin`. They cannot edit other people's fits. The first one
+  comes from the command line:
+
+  ```bash
+  pnpm super-user "Character Name"            # or a character id; --revoke to remove
+  ```
+
+- **Doctrines**: named sets of fits a corporation flies together, at `/doctrines`. Members of
+  the corporation see them and can send all of a doctrine's fits to a character in one go. Only
+  fits the whole corporation can see (corporation-shared or public) can be added, from the fit's
+  page. If an owner later makes a fit private, it drops out of view and is counted as hidden.
+
 ## Stack
 
 Next.js 16 (App Router, Cache Components) on Vercel · Postgres (Neon in production, PGlite
@@ -66,7 +93,11 @@ src/lib/auth/accounts.ts               profile/character rules: sign-in, link, t
 src/lib/auth/tokens.ts                 per-character ESI access tokens with locked refresh
 src/lib/auth/session.ts                session cookie (hashed in the DB) and SSO flow cookie
 src/lib/eve/{sso,esi,names}.ts         EVE SSO and ESI clients
-src/lib/permissions.ts                 who may view/edit/delete a fit
+src/lib/permissions.ts                 who may view/edit/delete a fit, manage doctrines, read the audit log
+src/lib/audit.ts                       audit log writes (in-transaction) and scoped reads
+src/lib/doctrines.ts                   doctrines and their fits
+src/lib/auth/super-users.ts            super user flag and the admin profile list
+src/app/admin, doctrines               super user admin page and audit log; doctrines
 src/db/schema.ts                       tables; migrations in drizzle/
 ```
 

@@ -34,9 +34,31 @@ export function canEditFitting(viewer: Viewer | null, fit: FitAccess): boolean {
   return viewer !== null && viewer.userId === fit.ownerId;
 }
 
-/** Admins may take down a shared fit (abuse, spam); they never get to read private ones. */
+/**
+ * Owners delete their own fits. Super users may also take down (moderate) public fits and fits
+ * shared with their own corporation; they never touch private or link-only fits of others.
+ */
 export function canDeleteFitting(viewer: Viewer | null, fit: FitAccess): boolean {
-  return canEditFitting(viewer, fit) || (viewer?.isAdmin === true && fit.visibility !== "private");
+  if (canEditFitting(viewer, fit)) return true;
+  if (!viewer?.isSuperUser) return false;
+  return fit.visibility === "public" || (fit.visibility === "corporation" && fit.corporationId === corporationOf(viewer));
+}
+
+/** Doctrines belong to a corporation and are maintained by its super users (by main character). */
+export function canManageDoctrines(viewer: Viewer | null, corporationId?: number): boolean {
+  const own = corporationOf(viewer);
+  return viewer?.isSuperUser === true && own !== null && (corporationId === undefined || corporationId === own);
+}
+
+/** A doctrine can only hold fits its corporation's members can all see. */
+export function fitsDoctrine(fit: FitAccess, corporationId: number): boolean {
+  return fit.visibility === "public" || (fit.visibility === "corporation" && fit.corporationId === corporationId);
+}
+
+/** Audit entries for a corporation are read by its super users; site-wide entries by every super user. */
+export function canReadAudit(viewer: Viewer | null, entryCorporationId: number | null): boolean {
+  if (!viewer?.isSuperUser) return false;
+  return entryCorporationId === null || entryCorporationId === corporationOf(viewer);
 }
 
 /** Sharing with a corporation means the owner's current main corporation, so a profile without one cannot. */

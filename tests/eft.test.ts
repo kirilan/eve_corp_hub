@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFit, EftError, fitSignature, parseEft, toEft } from "@/lib/fittings/eft";
+import { buildFit, diffItems, EftError, fitSignature, parseEft, toEft } from "@/lib/fittings/eft";
 import { BY_NAME, NAMES, RIFTER_EFT } from "./fixtures/types";
 
 describe("parseEft", () => {
@@ -80,5 +80,27 @@ describe("toEft and fitSignature", () => {
     const b = [{ type_id: 2873, flag: "HiSlot3", quantity: 1 }];
     expect(fitSignature(587, a)).toBe(fitSignature(587, b));
     expect(fitSignature(587, a)).not.toBe(fitSignature(587, [{ type_id: 2873, flag: "MedSlot0", quantity: 1 }]));
+  });
+});
+
+describe("diffItems", () => {
+  it("reports per-type changes and ignores slot renumbering", () => {
+    const before = [
+      { type_id: 2873, flag: "HiSlot0", quantity: 1 },
+      { type_id: 2048, flag: "LoSlot0", quantity: 1 },
+      { type_id: 2488, flag: "DroneBay", quantity: 2 },
+    ];
+    const after = [
+      { type_id: 2873, flag: "HiSlot3", quantity: 1 },
+      { type_id: 31932, flag: "LoSlot0", quantity: 1 },
+      { type_id: 2488, flag: "DroneBay", quantity: 5 },
+    ];
+    expect(diffItems(before, after)).toEqual({
+      added: [
+        { typeId: 2488, where: "DroneBay", quantity: 3 },
+        { typeId: 31932, where: "lo", quantity: 1 },
+      ],
+      removed: [{ typeId: 2048, where: "lo", quantity: 1 }],
+    });
   });
 });

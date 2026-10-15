@@ -38,7 +38,7 @@ function signIn(verified: VerifiedCharacter, intent: "login" | "link" = "login",
 }
 
 beforeEach(async () => {
-  await db.execute(sql`TRUNCATE users, characters, sessions, fittings CASCADE`);
+  await db.execute(sql`TRUNCATE users, characters, sessions, fittings, doctrines, audit_log CASCADE`);
 });
 
 describe("completeSignIn", () => {

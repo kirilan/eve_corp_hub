@@ -188,3 +188,33 @@ export function fitSignature(shipTypeId: number, items: FittingItem[]): string {
   }
   return `${shipTypeId}|${[...totals].map(([key, quantity]) => `${key}x${quantity}`).sort().join(",")}`;
 }
+
+export type ItemChange = { typeId: number; where: string; quantity: number };
+
+function totalsByPlace(items: FittingItem[]): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const item of items) {
+    const where = slotOf(item.flag)?.kind ?? item.flag;
+    const key = `${where}:${item.type_id}`;
+    totals.set(key, (totals.get(key) ?? 0) + item.quantity);
+  }
+  return totals;
+}
+
+/**
+ * What changed between two versions' items, per type and place (slot kind or bay), ignoring slot
+ * numbers: moving a module from HiSlot0 to HiSlot2 is not a change.
+ */
+export function diffItems(before: FittingItem[], after: FittingItem[]): { added: ItemChange[]; removed: ItemChange[] } {
+  const a = totalsByPlace(before);
+  const b = totalsByPlace(after);
+  const added: ItemChange[] = [];
+  const removed: ItemChange[] = [];
+  for (const key of new Set([...a.keys(), ...b.keys()])) {
+    const delta = (b.get(key) ?? 0) - (a.get(key) ?? 0);
+    if (delta === 0) continue;
+    const [where, typeId] = key.split(":");
+    (delta > 0 ? added : removed).push({ typeId: Number(typeId), where, quantity: Math.abs(delta) });
+  }
+  return { added, removed };
+}

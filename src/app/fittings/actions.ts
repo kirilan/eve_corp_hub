@@ -12,6 +12,7 @@ import {
   deleteFitting,
   FittingError,
   importGameFittings,
+  restoreVersion,
   sendManyToGame,
   sendToGame,
   setVisibility,
@@ -113,4 +114,9 @@ export async function bulkSend(_: BulkState, form: FormData): Promise<BulkState>
   } catch (error) {
     return { error: userMessage(error) };
   }
+}
+
+export async function restoreFit(fitId: string, version: number) {
+  const restored = await restoreVersion(await requireViewer(), fitId, version);
+  redirect(`/fittings/${fitId}/history?restored=${version}&as=${restored}`);
 }
