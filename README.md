@@ -178,3 +178,7 @@ Preview builds skip it, so a branch can never change the production schema.
 
 EVE SSO only redirects to registered callback URLs, and Vercel preview deployments get a new URL
 each time. So login works on production and locally, but not on preview deployments.
+
+## License
+
+[GNU General Public License v3.0](LICENSE).
