@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: { default: SITE_NAME, template: `%s · ${SITE_NAME}` },
-  description: "Store, share and sync EVE Online ship fittings with your corporation.",
+  description: "Store, share and sync EVE Online ship fittings with your corporation, fly doctrines, and track your income.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

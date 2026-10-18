@@ -1,7 +1,65 @@
 # Drydock
 
-A website for storing, sharing and syncing EVE Online ship fittings. Anyone can sign in with
-EVE SSO. What a profile can see follows its **main character's corporation**.
+Ship fittings, doctrines and income tracking for EVE Online pilots and their corporations.
+Live at **https://eve-corp-hub.vercel.app**. Anyone can sign in with their EVE character; what a
+profile can see follows its **main character's corporation**.
+
+## What it does
+
+- **Keeps your fits in one place**: paste a fit from EVE or Pyfa, or import the fits saved on
+  your characters. Every change is a version you can review or restore.
+- **Shares them**: each fit is private, shared with your corporation, shared by link, or public.
+  The Library lists your corporation's fits and the public ones.
+- **Sends them to the game**: writes fits to any of your characters' saved fittings, one at a
+  time or up to 50 at once.
+- **Doctrines**: corporation leaders group fits into doctrines; members send a whole doctrine to
+  a character in one go.
+- **Personal income**: charts what your characters earn (bounties, ESS, missions, market and
+  contract sales, rewards) with the taxes and fees on it, across all your characters. Only you
+  see it.
+- **One profile for all your alts**, across any number of EVE accounts.
+
+## How to use it
+
+### For pilots
+
+1. **Log in with your main** (*Log in with EVE Online*). This only proves which character you
+   are; it grants no access to character data.
+2. **Add your alts**: on *Characters*, *Add a character* logs in again and attaches another
+   character, from any of your accounts. *Make main* picks which character's corporation you
+   act as.
+3. **Choose what each character allows**, also on *Characters*:
+   - *Allow fitting sync*: read and write that character's saved fittings, for importing fits
+     and sending them to the game.
+   - *Allow income tracker*: read that character's wallet, for *Personal income*.
+
+   Allow only what you use. *Revoke access* removes it again; so does removing the app from
+   your third-party applications on the EVE website.
+4. **Add fits**: *My fittings → New fit* takes a pasted fit (*Copy to clipboard* in EVE's
+   fitting window, or Pyfa's EFT export). *Import from game* lists the fits saved on a character
+   and marks the ones you already have.
+5. **Share**: *Who can see it*, when adding or editing a fit: *Private*, *Corporation*, *Link
+   only* (an unguessable URL to hand out) or *Public*.
+6. **Send to the game**: *Send to a character* on a fit's page, or tick several fits on *My
+   fittings* or the *Library* and choose *Send selected to game*. They appear in that
+   character's saved fittings in game.
+7. **Fly doctrines**: *Doctrines* lists your corporation's doctrines; open one, *Select all*, and
+   send its fits to a character.
+8. **Track income**: once a character allows the income tracker, *Personal income* charts its
+   earnings. Filter by time range, income source and character; stack by character or source;
+   turn on *Taxes & fees* to see what was charged and what you kept.
+
+### For corporation leaders
+
+- **Super users** run the site: they manage their own corporation's doctrines, moderate shared
+  and public fits, appoint Corp Directors and other super users on `/admin`, read the audit log
+  and see the System health panel. The first super user is made in the database (see
+  Deployment).
+- **Corp Directors** have the same powers within one corporation: create doctrines, take down
+  fits shared with the corporation, appoint other directors, and read their corporation's audit
+  log.
+- Doctrines are built from fits the whole corporation can see: share a fit with the corporation
+  (or make it public), then add it to a doctrine from the fit's page.
 
 ## Concepts
 
