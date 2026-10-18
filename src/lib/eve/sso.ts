@@ -16,7 +16,7 @@ const jwks = createRemoteJWKSet(new URL("https://login.eveonline.com/oauth/jwks"
  */
 export const FEATURE_SCOPES = {
   fittings: ["esi-fittings.read_fittings.v1", "esi-fittings.write_fittings.v1"],
-  // Ratting income tracker: reads the wallet journal, keeps only bounty and ESS payouts.
+  // Personal income tracker: reads the wallet journal, keeps only income and the taxes and fees on it.
   wallet: ["esi-wallet.read_character_wallet.v1"],
 } as const satisfies Record<string, readonly string[]>;
 

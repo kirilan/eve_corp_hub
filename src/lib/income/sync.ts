@@ -1,11 +1,11 @@
 import "server-only";
 import { and, arrayContains, asc, eq, lt, or, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { characters, rattingEntries, walletSyncs } from "@/db/schema";
+import { characters, walletEntries, walletSyncs } from "@/db/schema";
 import { characterAccessToken, ConsentMissingError } from "@/lib/auth/tokens";
 import { esiPages } from "@/lib/eve/esi";
 import { FEATURE_SCOPES } from "@/lib/eve/sso";
-import { sourceOf } from "./sources";
+import { expenseOf, sourceOf } from "./sources";
 
 // ESI caches the journal for an hour: syncing more often only re-reads the same pages.
 const SYNC_INTERVAL_MS = 60 * 60 * 1000;
@@ -21,10 +21,16 @@ export type JournalEntry = {
   context_id_type?: string;
 };
 
-/** The ratting lines of a wallet journal, as rows to store. Everything else in the wallet is dropped here. */
-export function rattingRows(characterId: number, journal: JournalEntry[]): (typeof rattingEntries.$inferInsert)[] {
+/** Whether the tracker keeps a journal line: ISK coming in from income, or going out on charges against it. */
+function kept(entry: JournalEntry): boolean {
+  const amount = entry.amount ?? 0;
+  return (sourceOf(entry.ref_type) !== null && amount > 0) || (expenseOf(entry.ref_type) !== null && amount < 0);
+}
+
+/** The income and charge lines of a wallet journal, as rows to store. Everything else in the wallet is dropped here. */
+export function walletRows(characterId: number, journal: JournalEntry[]): (typeof walletEntries.$inferInsert)[] {
   return journal
-    .filter((entry) => sourceOf(entry.ref_type) !== null)
+    .filter(kept)
     .map((entry) => ({
       characterId,
       journalId: entry.id,
@@ -37,18 +43,18 @@ export function rattingRows(characterId: number, journal: JournalEntry[]): (type
 }
 
 /**
- * Reads one character's wallet journal and stores its new ratting lines. Never throws: a failure
+ * Reads one character's wallet journal and stores its new income and charge lines. Never throws: a failure
  * is recorded on the character's sync row and shown next to its data, which stays as it was.
  */
-export async function syncCharacterRatting(userId: string, characterId: number): Promise<void> {
+export async function syncCharacterIncome(userId: string, characterId: number): Promise<void> {
   const now = new Date();
   try {
     const token = await characterAccessToken(userId, characterId, "wallet");
     const journal = await esiPages<JournalEntry>(`/characters/${characterId}/wallet/journal`, { token });
-    const rows = rattingRows(characterId, journal);
+    const rows = walletRows(characterId, journal);
     await db.transaction(async (tx) => {
       for (let i = 0; i < rows.length; i += 1000) {
-        await tx.insert(rattingEntries).values(rows.slice(i, i + 1000)).onConflictDoNothing();
+        await tx.insert(walletEntries).values(rows.slice(i, i + 1000)).onConflictDoNothing();
       }
       const historyFrom = new Date(now.getTime() - JOURNAL_DAYS * 24 * 60 * 60 * 1000);
       await tx
@@ -84,13 +90,13 @@ function due(before: Date) {
 }
 
 /** Syncs a profile's tracked characters not synced within the hour; called when the owner opens the tracker. */
-export async function syncStaleRatting(userId: string): Promise<void> {
+export async function syncStaleIncome(userId: string): Promise<void> {
   const stale = await db
     .select({ id: characters.id })
     .from(characters)
     .leftJoin(walletSyncs, eq(walletSyncs.characterId, characters.id))
     .where(and(eq(characters.userId, userId), tracking, due(new Date(Date.now() - SYNC_INTERVAL_MS))));
-  await Promise.all(stale.map((character) => syncCharacterRatting(userId, character.id)));
+  await Promise.all(stale.map((character) => syncCharacterIncome(userId, character.id)));
 }
 
 /**
@@ -98,7 +104,7 @@ export async function syncStaleRatting(userId: string): Promise<void> {
  * time budget runs out. Run daily by cron so history has no gaps even for owners who rarely look:
  * the journal only reaches 30 days back.
  */
-export async function syncAllRatting(budgetMs: number, concurrency = 4): Promise<{ synced: number; remaining: number }> {
+export async function syncAllIncome(budgetMs: number, concurrency = 4): Promise<{ synced: number; remaining: number }> {
   const deadline = Date.now() + budgetMs;
   const queue = await db
     .select({ id: characters.id, userId: characters.userId })
@@ -111,7 +117,7 @@ export async function syncAllRatting(budgetMs: number, concurrency = 4): Promise
   async function worker() {
     while (next < queue.length && Date.now() < deadline) {
       const character = queue[next++];
-      await syncCharacterRatting(character.userId, character.id);
+      await syncCharacterIncome(character.userId, character.id);
       synced++;
     }
   }
@@ -119,15 +125,15 @@ export async function syncAllRatting(budgetMs: number, concurrency = 4): Promise
   return { synced, remaining: queue.length - synced };
 }
 
-/** Forgets a character's stored ratting history. If it still allows wallet tracking, the next sync starts over from 30 days back. */
-export async function deleteRattingHistory(userId: string, characterId: number): Promise<void> {
+/** Forgets a character's stored income history. If it still allows wallet tracking, the next sync starts over from 30 days back. */
+export async function deleteIncomeHistory(userId: string, characterId: number): Promise<void> {
   const [own] = await db
     .select({ id: characters.id })
     .from(characters)
     .where(and(eq(characters.id, characterId), eq(characters.userId, userId)));
   if (!own) throw new Error("that character is not linked to your profile");
   await db.transaction(async (tx) => {
-    await tx.delete(rattingEntries).where(eq(rattingEntries.characterId, characterId));
+    await tx.delete(walletEntries).where(eq(walletEntries.characterId, characterId));
     await tx.delete(walletSyncs).where(eq(walletSyncs.characterId, characterId));
   });
 }

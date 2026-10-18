@@ -229,12 +229,14 @@ export const eveTypes = pgTable("eve_types", {
 const isk = (name: string) => numeric(name, { precision: 20, scale: 2, mode: "number" });
 
 /**
- * Ratting income from characters that allow wallet tracking: only bounty and ESS payout lines of
- * the wallet journal are kept, never the rest of the wallet. ESI returns 30 days of journal, so
- * this table is what makes longer history possible. Deleted with the character (unlink, transfer).
+ * Wallet journal lines from characters that allow wallet tracking, for the income tracker: the
+ * lines that bring ISK in (bounties, ESS, missions, market and contract sales, rewards) and the
+ * taxes and fees charged on them; see `src/lib/income/sources.ts`. Nothing else in the wallet is
+ * kept. ESI returns 30 days of journal, so this table is what makes longer history possible.
+ * Deleted with the character (unlink, transfer).
  */
-export const rattingEntries = pgTable(
-  "ratting_entries",
+export const walletEntries = pgTable(
+  "wallet_entries",
   {
     characterId: eveId("character_id")
       .notNull()
@@ -242,17 +244,19 @@ export const rattingEntries = pgTable(
     // ESI's journal reference id: re-syncing the same 30 days inserts nothing twice.
     journalId: eveId("journal_id").notNull(),
     date: timestamp("date", { withTimezone: true }).notNull(),
-    // "bounty_prizes", "bounty_prize" or "ess_escrow_transfer".
+    // ESI's ref type, e.g. "bounty_prizes", "market_transaction" or "brokers_fee".
     refType: text("ref_type").notNull(),
-    // Net: what reached the wallet, after corporation tax.
+    // Signed, as in the journal: income is positive and what reached the wallet (after corporation
+    // tax), taxes and fees are negative.
     amount: isk("amount").notNull(),
-    // Corporation tax withheld from a bounty payout; 0 for ESS.
+    // Corporation tax withheld from a payout; 0 where none applies.
     tax: isk("tax").notNull().default(0),
+    // Set when the journal names a solar system, as it does for bounties.
     solarSystemId: eveId("solar_system_id"),
   },
   (t) => [
     primaryKey({ columns: [t.characterId, t.journalId] }),
-    index("ratting_entries_character_date_idx").on(t.characterId, t.date),
+    index("wallet_entries_character_date_idx").on(t.characterId, t.date),
   ],
 );
 
@@ -275,4 +279,4 @@ export type Fitting = typeof fittings.$inferSelect;
 export type FittingVersion = typeof fittingVersions.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type Doctrine = typeof doctrines.$inferSelect;
-export type RattingEntry = typeof rattingEntries.$inferSelect;
+export type WalletEntry = typeof walletEntries.$inferSelect;

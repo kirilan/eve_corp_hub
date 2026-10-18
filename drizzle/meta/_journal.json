@@ -36,6 +36,20 @@
       "when": 1792320495231,
       "tag": "0004_ratting_tracker",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792326707919,
+      "tag": "0005_wallet_entries",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792326712982,
+      "tag": "0006_drop_ratting_entries",
+      "breakpoints": true
     }
   ]
 }

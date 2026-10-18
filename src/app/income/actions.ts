@@ -3,11 +3,11 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { currentUserId } from "@/lib/auth/session";
-import { deleteRattingHistory } from "@/lib/ratting/sync";
+import { deleteIncomeHistory } from "@/lib/income/sync";
 
 export async function deleteHistory(characterId: number) {
   const userId = await currentUserId();
   if (!userId) redirect("/");
-  await deleteRattingHistory(userId, characterId);
+  await deleteIncomeHistory(userId, characterId);
   refresh();
 }

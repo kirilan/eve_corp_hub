@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { env } from "@/lib/env";
-import { syncAllRatting } from "@/lib/ratting/sync";
+import { syncAllIncome } from "@/lib/income/sync";
 
 export const maxDuration = 300;
 
@@ -15,6 +15,6 @@ export async function GET(request: NextRequest) {
     return new Response("unauthorized", { status: 401 });
   }
   // Leaves a minute of the function's budget for the syncs already in flight to finish.
-  const result = await syncAllRatting((maxDuration - 60) * 1000);
+  const result = await syncAllIncome((maxDuration - 60) * 1000);
   return Response.json(result);
 }

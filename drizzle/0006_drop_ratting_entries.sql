@@ -1,0 +1,1 @@
+DROP TABLE "ratting_entries" CASCADE;

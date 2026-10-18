@@ -2,5 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "pnpm vercel-build",
   "regions": ["fra1"],
-  "crons": [{ "path": "/api/cron/ratting", "schedule": "17 3 * * *" }]
+  "crons": [{ "path": "/api/cron/income", "schedule": "17 3 * * *" }]
 }

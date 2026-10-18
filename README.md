@@ -17,7 +17,7 @@ EVE SSO. What a profile can see follows its **main character's corporation**.
   main, the oldest remaining character becomes main.
 - **Consent is opt-in per character**: logging in requests no scopes. *Allow fitting sync*
   asks that character for `esi-fittings.read_fittings.v1` and `esi-fittings.write_fittings.v1`;
-  *Allow ratting tracker* asks for `esi-wallet.read_character_wallet.v1`. A character holds one
+  *Allow income tracker* asks for `esi-wallet.read_character_wallet.v1`. A character holds one
   refresh token and each grant replaces it, so a grant re-requests the features the character
   already allows (`featuresWith` in `src/lib/eve/sso.ts`). *Revoke access* drops all of them at
   once; to keep only one, revoke and grant that one again. Refresh tokens are stored AES-256-GCM
@@ -53,23 +53,39 @@ EVE SSO. What a profile can see follows its **main character's corporation**.
   sent to the game.
 - Type names and slots come from ESI on first sight and are cached in `eve_types`.
 
-## Ratting tracker
+## Personal income
 
-`/ratting` charts bounty and ESS income for the characters that allow it, summed across the
-profile. Only the owner sees it; it is not part of any corporation's view.
+`/income` charts what came into the wallets of the characters that allow it, summed across the
+profile. Only the owner sees it; it is not part of any corporation's view. (It began as a ratting
+tracker; `/ratting` redirects here.)
 
-- **What is stored**: from each character's wallet journal, only `bounty_prizes` (and the older
-  `bounty_prize`) and `ess_escrow_transfer` lines: date, net amount, corporation tax withheld, and
-  the solar system for bounties. Nothing else in the wallet is kept.
+- **What is stored**: from each character's wallet journal, only lines that bring ISK in, grouped
+  into sources in `src/lib/income/sources.ts`: bounties (`bounty_prizes`, `bounty_prize`), ESS
+  payouts, mission rewards, market sales (`market_transaction` with a positive amount), contract
+  sales and courier rewards, and other rewards (daily goals, corporation projects, freelance jobs,
+  Project Discovery and the like). Date, amount, corporation tax withheld, and the solar system
+  for bounties. Also the charges on that income, each tied to its source so it follows the source
+  filter: broker fees and sales tax (market and contracts), security tax, reward tax. ISK moved
+  between characters (donations, corporation payments) is left out, as it would count twice
+  across a profile's own characters; so are purchases, industry and PI costs, and everything else
+  in the wallet. Amounts are signed as in the journal.
+- **Taxes & fees** (off by default, `exp=1`): charges are drawn below the zero line, and income
+  becomes income before corporation tax, with the tax joining the charges, so income minus
+  expenses is still what the wallets kept. Tiles switch to income, taxes and fees, net, and net
+  per active day; the per-character table gains expenses and net; a list breaks expenses down by
+  kind.
+- **Sales are turnover**: market and contract sales are what buyers paid. Purchases are never
+  subtracted, so even net market income is not profit.
 - **History**: ESI returns 30 days of journal, so history starts 30 days before a character's
   first sync and grows from there. Entries are keyed by journal id, so re-reading is harmless.
 - **Syncing**: opening the page syncs characters not synced within the hour (ESI caches the
-  journal for an hour). A daily Vercel Cron (`/api/cron/ratting`, see `vercel.json`) syncs every
+  journal for an hour). A daily Vercel Cron (`/api/cron/income`, see `vercel.json`) syncs every
   tracking character, so nobody's history has a gap however rarely they look.
-- **Slices**: range (7/30/90 days, 1 year, all), grouping (day/week/month, UTC), source
-  (bounties/ESS), characters, and stacking by character or source. Below the chart: total, per
-  active day, best day, corporation tax; a per-character table (share, active days, bounty ISK
-  per active hour, estimated from the 20-minute bounty ticks); top systems; a data table.
+- **Slices**: range (7/30/90 days, 1 year, all), grouping (day/week/month, UTC), sources (any
+  combination, or *Ratting* for bounties and ESS), characters, and stacking by character or
+  source. Below the chart: total, per active day, best day, corporation tax; a per-character table
+  (share, each source, active days, bounty ISK per active hour, estimated from the 20-minute bounty
+  ticks); top ratting systems; a data table.
 - **Revoking** stops syncing and keeps the history; *Delete history* on the page removes it.
   Unlinking a character, or the character moving to another account, deletes it.
 
@@ -126,8 +142,8 @@ src/lib/auth/tokens.ts                 per-character ESI access tokens with lock
 src/lib/auth/session.ts                session cookie (hashed in the DB) and SSO flow cookie
 src/lib/eve/{sso,esi,names}.ts         EVE SSO and ESI clients
 src/lib/permissions.ts                 who may view/edit/delete a fit, manage doctrines, read the audit log
-src/lib/ratting/{sync,report}.ts       wallet journal sync (ratting lines only) and the tracker's figures
-src/app/ratting, api/cron/ratting      ratting tracker page; daily sync for Vercel Cron
+src/lib/income/{sync,report}.ts        wallet journal sync (income and its charges only) and the tracker's figures
+src/app/income, api/cron/income        personal income page; daily sync for Vercel Cron
 src/lib/audit.ts                       audit log writes (in-transaction) and scoped reads
 src/lib/doctrines.ts                   doctrines and their fits
 src/lib/auth/super-users.ts            super user flag and the admin profile list

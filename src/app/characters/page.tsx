@@ -22,7 +22,7 @@ function grantUrl(scopes: string[], feature: Feature): string {
 
 const FEATURE_LABELS: Record<Feature, { on: string; off: string; grant: string }> = {
   fittings: { on: "Fitting sync allowed", off: "No fitting access", grant: "Allow fitting sync" },
-  wallet: { on: "Ratting tracker allowed", off: "No wallet access", grant: "Allow ratting tracker" },
+  wallet: { on: "Income tracker allowed", off: "No wallet access", grant: "Allow income tracker" },
 };
 
 export default function CharactersPage({ searchParams }: PageProps<"/characters">) {
@@ -40,9 +40,11 @@ export default function CharactersPage({ searchParams }: PageProps<"/characters"
         </p>
         <p className="mt-2 max-w-2xl text-sm text-muted">
           Extra access is optional and per character. <em>Fitting sync</em> reads and writes saved fittings.{" "}
-          <em>Ratting tracker</em> reads the wallet journal and keeps only bounty and ESS payouts, visible to you
-          alone; nothing else in the wallet is stored. Revoking access keeps the history already collected until you
-          delete it on the <Link href="/ratting" className="text-accent hover:underline">Ratting</Link> page; unlinking a
+          <em>Income tracker</em> reads the wallet journal and keeps only income (bounties, ESS, missions, market and
+          contract sales, rewards) and the taxes and fees charged on it, visible to you alone; nothing else in the
+          wallet is stored.
+          Revoking access keeps the history already collected until you delete it on the{" "}
+          <Link href="/income" className="text-accent hover:underline">Personal income</Link> page; unlinking a
           character deletes it.
         </p>
       </div>
