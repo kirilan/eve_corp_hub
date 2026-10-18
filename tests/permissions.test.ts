@@ -9,6 +9,7 @@ import {
   canManageDoctrines,
   canReadAudit,
   canViewFitting,
+  canViewSystemHealth,
   fitsDoctrine,
 } from "@/lib/permissions";
 
@@ -130,6 +131,13 @@ describe("Corp Directors", () => {
     expect(canGrantDirector(admin, { userId: "x", corporationId: CORP })).toBe(true);
     expect(canGrantSuperUser(director, "x")).toBe(false);
     expect(canGrantSuperUser(admin, "x")).toBe(true);
+  });
+
+  it("do not see the site's health panel", () => {
+    expect(canViewSystemHealth(director)).toBe(false);
+    expect(canViewSystemHealth(owner)).toBe(false);
+    expect(canViewSystemHealth(null)).toBe(false);
+    expect(canViewSystemHealth(admin)).toBe(true);
   });
 });
 

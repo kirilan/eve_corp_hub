@@ -273,6 +273,27 @@ export const walletSyncs = pgTable("wallet_syncs", {
   error: text("error"),
 });
 
+/**
+ * One row per scheduled job run, for the super users' health panel. Written when the run starts and
+ * again when it ends: a row that never ends means the function was killed (timeout, crash).
+ */
+export const cronRuns = pgTable(
+  "cron_runs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    // The cron path in vercel.json, e.g. "/api/cron/income".
+    job: text("job").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    // Null until the run ends.
+    ok: boolean("ok"),
+    // What the job reported, e.g. { synced, remaining }.
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    error: text("error"),
+  },
+  (t) => [index("cron_runs_job_started_idx").on(t.job, t.startedAt)],
+);
+
 export type User = typeof users.$inferSelect;
 export type Character = typeof characters.$inferSelect;
 export type Fitting = typeof fittings.$inferSelect;
@@ -280,3 +301,4 @@ export type FittingVersion = typeof fittingVersions.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type Doctrine = typeof doctrines.$inferSelect;
 export type WalletEntry = typeof walletEntries.$inferSelect;
+export type CronRun = typeof cronRuns.$inferSelect;

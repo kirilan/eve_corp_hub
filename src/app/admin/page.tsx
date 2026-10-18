@@ -7,8 +7,9 @@ import { AUDIT_PAGE_SIZE, readAudit } from "@/lib/audit";
 import { listProfiles } from "@/lib/auth/super-users";
 import { getViewer } from "@/lib/auth/viewer";
 import { entityNames } from "@/lib/eve/names";
-import { canAdminister, canGrantDirector, canGrantSuperUser, runsCorporation } from "@/lib/permissions";
+import { canAdminister, canGrantDirector, canGrantSuperUser, canViewSystemHealth, runsCorporation } from "@/lib/permissions";
 import { toggleDirector, toggleSuperUser } from "./actions";
+import { HealthPanel } from "./health";
 
 // No title or heading in the static shell: to anyone but a super user this page is an ordinary 404.
 export const metadata: Metadata = {};
@@ -74,6 +75,12 @@ async function Admin({ searchParams }: { searchParams: PageProps<"/admin">["sear
   return (
     <>
       <h1 className="text-2xl font-semibold">Admin</h1>
+      {canViewSystemHealth(viewer) && (
+        // Its own boundary: the ESI probe may take seconds, and the profiles below should not wait for it.
+        <Suspense fallback={<p className="text-sm text-muted">Checking system health…</p>}>
+          <HealthPanel />
+        </Suspense>
+      )}
       <section className="space-y-3">
         <h2 className="text-lg font-medium">Profiles</h2>
         <p className="text-sm text-muted">

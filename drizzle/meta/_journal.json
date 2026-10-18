@@ -50,6 +50,13 @@
       "when": 1792326712982,
       "tag": "0006_drop_ratting_entries",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792334322637,
+      "tag": "0007_cron_runs",
+      "breakpoints": true
     }
   ]
 }

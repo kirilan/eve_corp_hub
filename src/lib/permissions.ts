@@ -60,6 +60,11 @@ export function canAdminister(viewer: Viewer | null): boolean {
   return viewer?.isSuperUser === true || isActiveDirector(viewer);
 }
 
+/** The site's health panel (scheduled jobs, dependencies, site-wide counts): super users only, not directors. */
+export function canViewSystemHealth(viewer: Viewer | null): boolean {
+  return viewer?.isSuperUser === true;
+}
+
 /**
  * Owners delete their own fits. Admins may also take down (moderate) shared fits: fits shared with
  * a corporation they run, and public fits - any of them for super users, those whose owner's main

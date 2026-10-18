@@ -119,6 +119,15 @@ tracker; `/ratting` redirects here.)
   Nobody can change their own roles, and neither tier can edit other people's fits. The first
   super user is made in the database (see Deployment); after that, everything goes through `/admin`.
 
+- **System health** (super users only, top of `/admin`): each scheduled job from `vercel.json`
+  with its last ten runs (outcome, duration, what it did or why it failed), next run, last
+  success, and an *Overdue* flag when the scheduler skipped a run. Runs are recorded in
+  `cron_runs` by `recordCronRun` and kept 90 days; a run with no end was killed (timeout, crash).
+  Below that: the deployment (environment, commit, region), the database (round trip, size,
+  migrations applied), ESI (round trip, players online, server version, VIP mode), account,
+  wallet tracking and content counts, and whether `CRON_SECRET` and `ESI_CONTACT` are set.
+  Everything is read when the page loads.
+
 - **Doctrines**: named sets of fits a corporation flies together, at `/doctrines`. Members of
   the corporation see them and can send all of a doctrine's fits to a character in one go. Only
   fits the whole corporation can see (corporation-shared or public) can be added, from the fit's
@@ -147,7 +156,8 @@ src/app/income, api/cron/income        personal income page; daily sync for Verc
 src/lib/audit.ts                       audit log writes (in-transaction) and scoped reads
 src/lib/doctrines.ts                   doctrines and their fits
 src/lib/auth/super-users.ts            super user flag and the admin profile list
-src/app/admin, doctrines               super user admin page and audit log; doctrines
+src/app/admin, doctrines               super user admin page, audit log and health panel; doctrines
+src/lib/{cron,health}.ts               cron run recording and schedules; health panel figures
 src/db/schema.ts                       tables; migrations in drizzle/
 ```
 
