@@ -16,9 +16,13 @@ const jwks = createRemoteJWKSet(new URL("https://login.eveonline.com/oauth/jwks"
  */
 export const FEATURE_SCOPES = {
   fittings: ["esi-fittings.read_fittings.v1", "esi-fittings.write_fittings.v1"],
+  // Ratting income tracker: reads the wallet journal, keeps only bounty and ESS payouts.
+  wallet: ["esi-wallet.read_character_wallet.v1"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type Feature = keyof typeof FEATURE_SCOPES;
+
+export const FEATURES = Object.keys(FEATURE_SCOPES) as Feature[];
 
 export function isFeature(value: unknown): value is Feature {
   return typeof value === "string" && Object.hasOwn(FEATURE_SCOPES, value);
@@ -30,6 +34,15 @@ export function scopesFor(features: readonly Feature[]): string[] {
 
 export function hasFeature(scopes: readonly string[], feature: Feature): boolean {
   return FEATURE_SCOPES[feature].every((scope) => scopes.includes(scope));
+}
+
+/**
+ * The features to ask for when a character turns one more on. A character keeps a single refresh
+ * token and each SSO grant replaces it, so the request must repeat everything already granted or
+ * the new token would silently drop it.
+ */
+export function featuresWith(scopes: readonly string[], feature: Feature): Feature[] {
+  return FEATURES.filter((f) => f === feature || hasFeature(scopes, f));
 }
 
 export function redirectUri(): string {

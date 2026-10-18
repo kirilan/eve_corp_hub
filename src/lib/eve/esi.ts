@@ -16,7 +16,7 @@ export class EsiError extends Error {
 
 type EsiInit = { method?: "GET" | "POST" | "DELETE"; body?: unknown; token?: string };
 
-export async function esi<T>(path: string, init: EsiInit = {}): Promise<T> {
+async function request(path: string, init: EsiInit): Promise<Response> {
   const headers: Record<string, string> = {
     Accept: "application/json",
     "User-Agent": `eve_corp_hub (${env().ESI_CONTACT})`,
@@ -34,8 +34,29 @@ export async function esi<T>(path: string, init: EsiInit = {}): Promise<T> {
     const detail = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new EsiError(`ESI ${init.method ?? "GET"} ${path} failed (${response.status}): ${detail?.error ?? response.statusText}`, response.status);
   }
+  return response;
+}
+
+export async function esi<T>(path: string, init: EsiInit = {}): Promise<T> {
+  const response = await request(path, init);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+// Wallet journals of busy traders can run to dozens of pages; nothing we read needs more.
+const MAX_PAGES = 50;
+
+/** Every page of a paged GET (`?page=`, total in `X-Pages`), concatenated in page order. */
+export async function esiPages<T>(path: string, init: { token?: string } = {}): Promise<T[]> {
+  const separator = path.includes("?") ? "&" : "?";
+  const out: T[] = [];
+  let pages = 1;
+  for (let page = 1; page <= Math.min(pages, MAX_PAGES); page++) {
+    const response = await request(`${path}${separator}page=${page}`, init);
+    pages = Number(response.headers.get("X-Pages") ?? 1) || 1;
+    out.push(...((await response.json()) as T[]));
+  }
+  return out;
 }
 
 export type Affiliation = { character_id: number; corporation_id: number; alliance_id?: number; faction_id?: number };

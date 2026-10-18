@@ -16,8 +16,12 @@ EVE SSO. What a profile can see follows its **main character's corporation**.
   A mismatch on login or token refresh removes the character from its old profile. If it was the
   main, the oldest remaining character becomes main.
 - **Consent is opt-in per character**: logging in requests no scopes. *Allow fitting sync*
-  asks that character for `esi-fittings.read_fittings.v1` and `esi-fittings.write_fittings.v1`.
-  Refresh tokens are stored AES-256-GCM encrypted.
+  asks that character for `esi-fittings.read_fittings.v1` and `esi-fittings.write_fittings.v1`;
+  *Allow ratting tracker* asks for `esi-wallet.read_character_wallet.v1`. A character holds one
+  refresh token and each grant replaces it, so a grant re-requests the features the character
+  already allows (`featuresWith` in `src/lib/eve/sso.ts`). *Revoke access* drops all of them at
+  once; to keep only one, revoke and grant that one again. Refresh tokens are stored AES-256-GCM
+  encrypted.
 - **Fit visibility**:
 
   | Visibility | Who can see it |
@@ -48,6 +52,26 @@ EVE SSO. What a profile can see follows its **main character's corporation**.
 - Names (50 chars) and descriptions (500) are capped at EVE's limits, so every stored fit can be
   sent to the game.
 - Type names and slots come from ESI on first sight and are cached in `eve_types`.
+
+## Ratting tracker
+
+`/ratting` charts bounty and ESS income for the characters that allow it, summed across the
+profile. Only the owner sees it; it is not part of any corporation's view.
+
+- **What is stored**: from each character's wallet journal, only `bounty_prizes` (and the older
+  `bounty_prize`) and `ess_escrow_transfer` lines: date, net amount, corporation tax withheld, and
+  the solar system for bounties. Nothing else in the wallet is kept.
+- **History**: ESI returns 30 days of journal, so history starts 30 days before a character's
+  first sync and grows from there. Entries are keyed by journal id, so re-reading is harmless.
+- **Syncing**: opening the page syncs characters not synced within the hour (ESI caches the
+  journal for an hour). A daily Vercel Cron (`/api/cron/ratting`, see `vercel.json`) syncs every
+  tracking character, so nobody's history has a gap however rarely they look.
+- **Slices**: range (7/30/90 days, 1 year, all), grouping (day/week/month, UTC), source
+  (bounties/ESS), characters, and stacking by character or source. Below the chart: total, per
+  active day, best day, corporation tax; a per-character table (share, active days, bounty ISK
+  per active hour, estimated from the 20-minute bounty ticks); top systems; a data table.
+- **Revoking** stops syncing and keeps the history; *Delete history* on the page removes it.
+  Unlinking a character, or the character moving to another account, deletes it.
 
 ## History, audit log, doctrines, super users
 
@@ -102,6 +126,8 @@ src/lib/auth/tokens.ts                 per-character ESI access tokens with lock
 src/lib/auth/session.ts                session cookie (hashed in the DB) and SSO flow cookie
 src/lib/eve/{sso,esi,names}.ts         EVE SSO and ESI clients
 src/lib/permissions.ts                 who may view/edit/delete a fit, manage doctrines, read the audit log
+src/lib/ratting/{sync,report}.ts       wallet journal sync (ratting lines only) and the tracker's figures
+src/app/ratting, api/cron/ratting      ratting tracker page; daily sync for Vercel Cron
 src/lib/audit.ts                       audit log writes (in-transaction) and scoped reads
 src/lib/doctrines.ts                   doctrines and their fits
 src/lib/auth/super-users.ts            super user flag and the admin profile list
@@ -116,7 +142,8 @@ normal wire protocol.
 
 1. Register a **development** application at https://developers.eveonline.com/applications:
    - callback URL `http://localhost:3003/auth/callback`
-   - scopes `esi-fittings.read_fittings.v1` and `esi-fittings.write_fittings.v1`
+   - scopes `esi-fittings.read_fittings.v1`, `esi-fittings.write_fittings.v1` and
+     `esi-wallet.read_character_wallet.v1`
 2. `cp .env.example .env.local`, then fill in the client id/secret, an encryption key
    (`openssl rand -base64 32`) and `ESI_CONTACT`.
 3. Run:
@@ -154,10 +181,12 @@ Preview builds skip it, so a branch can never change the production schema.
    to this project. It provides `DATABASE_URL` (pooled, used by the app) and
    `DATABASE_URL_UNPOOLED` (used for migrations).
 3. Register a **production** EVE application with callback
-   `https://<production domain>/auth/callback` and the two `esi-fittings` scopes.
+   `https://<production domain>/auth/callback`, the two `esi-fittings` scopes and
+   `esi-wallet.read_character_wallet.v1`. EVE SSO refuses any scope the application does not list.
 4. Set for Production: `APP_URL` (`https://<production domain>`), `EVE_CLIENT_ID`,
    `EVE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` (a new `openssl rand -base64 32`; never reuse the
-   dev key), `ESI_CONTACT`.
+   dev key), `ESI_CONTACT`, and `CRON_SECRET` (`openssl rand -hex 32`; Vercel Cron sends it to
+   the daily wallet sync, which refuses calls without it).
 5. Redeploy, and check that the build log says `migrations applied`. Log in once on the site.
    Then make yourself the first super user in Neon's **SQL Editor**, so the production
    credentials never leave Neon:

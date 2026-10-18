@@ -34,6 +34,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               ["/fittings", "My fittings"],
               ["/library", "Library"],
               ["/doctrines", "Doctrines"],
+              ["/ratting", "Ratting"],
               ["/characters", "Characters"],
             ].map(([href, label]) => (
               <Link key={href} href={href} className="text-sm text-muted hover:text-foreground">

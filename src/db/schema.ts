@@ -7,6 +7,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -224,9 +225,54 @@ export const eveTypes = pgTable("eve_types", {
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ISK amounts: two decimals, and a wallet can hold more than a double stores exactly.
+const isk = (name: string) => numeric(name, { precision: 20, scale: 2, mode: "number" });
+
+/**
+ * Ratting income from characters that allow wallet tracking: only bounty and ESS payout lines of
+ * the wallet journal are kept, never the rest of the wallet. ESI returns 30 days of journal, so
+ * this table is what makes longer history possible. Deleted with the character (unlink, transfer).
+ */
+export const rattingEntries = pgTable(
+  "ratting_entries",
+  {
+    characterId: eveId("character_id")
+      .notNull()
+      .references(() => characters.id, { onDelete: "cascade" }),
+    // ESI's journal reference id: re-syncing the same 30 days inserts nothing twice.
+    journalId: eveId("journal_id").notNull(),
+    date: timestamp("date", { withTimezone: true }).notNull(),
+    // "bounty_prizes", "bounty_prize" or "ess_escrow_transfer".
+    refType: text("ref_type").notNull(),
+    // Net: what reached the wallet, after corporation tax.
+    amount: isk("amount").notNull(),
+    // Corporation tax withheld from a bounty payout; 0 for ESS.
+    tax: isk("tax").notNull().default(0),
+    solarSystemId: eveId("solar_system_id"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.characterId, t.journalId] }),
+    index("ratting_entries_character_date_idx").on(t.characterId, t.date),
+  ],
+);
+
+/** Wallet journal sync state per character, from its first sync attempt on. */
+export const walletSyncs = pgTable("wallet_syncs", {
+  characterId: eveId("character_id")
+    .primaryKey()
+    .references(() => characters.id, { onDelete: "cascade" }),
+  // The journal reaches 30 days back from the first successful sync: complete history starts there.
+  historyFrom: timestamp("history_from", { withTimezone: true }),
+  syncedAt: timestamp("synced_at", { withTimezone: true }),
+  attemptedAt: timestamp("attempted_at", { withTimezone: true }).notNull().defaultNow(),
+  // Last failure, cleared by the next success; stored data stays visible meanwhile.
+  error: text("error"),
+});
+
 export type User = typeof users.$inferSelect;
 export type Character = typeof characters.$inferSelect;
 export type Fitting = typeof fittings.$inferSelect;
 export type FittingVersion = typeof fittingVersions.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type Doctrine = typeof doctrines.$inferSelect;
+export type RattingEntry = typeof rattingEntries.$inferSelect;

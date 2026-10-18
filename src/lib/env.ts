@@ -11,6 +11,8 @@ const schema = z.object({
     .refine((value) => Buffer.from(value, "base64").length === 32, "must be 32 bytes, base64-encoded"),
   // CCP asks every ESI client to identify itself with a way to reach its operator.
   ESI_CONTACT: z.string().min(1).default("unset"),
+  // Vercel Cron sends it as a bearer token; without it the daily wallet sync refuses every call.
+  CRON_SECRET: z.string().min(16).optional(),
 });
 
 export type Env = z.infer<typeof schema>;
