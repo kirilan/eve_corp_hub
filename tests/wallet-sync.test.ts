@@ -7,7 +7,9 @@ import { FEATURE_SCOPES } from "@/lib/eve/sso";
 import { deleteIncomeHistory, syncCharacterIncome, syncStaleIncome, type JournalEntry } from "@/lib/income/sync";
 
 const esiPages = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/eve/esi", async (original) => ({ ...(await original<typeof import("@/lib/eve/esi")>()), esiPages }));
+// Market transactions are read beside the journal; these tests are about the journal, so there are none.
+const esi = vi.hoisted(() => vi.fn(async () => []));
+vi.mock("@/lib/eve/esi", async (original) => ({ ...(await original<typeof import("@/lib/eve/esi")>()), esiPages, esi }));
 vi.mock("@/lib/eve/sso", async (original) => ({ ...(await original<typeof import("@/lib/eve/sso")>()), revokeRefreshToken: vi.fn(async () => undefined) }));
 
 async function sign(id: number, ownerHash = "owner", userId: string | null = null, scopes: string[] = [...FEATURE_SCOPES.wallet]) {

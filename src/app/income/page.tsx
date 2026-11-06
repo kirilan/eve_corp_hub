@@ -8,6 +8,7 @@ import { getViewer } from "@/lib/auth/viewer";
 import { entityNames, portraitUrl } from "@/lib/eve/names";
 import { formatBucket, formatIsk, formatIskExact } from "@/lib/income/format";
 import {
+  type Bucket,
   type Filters,
   GROUPINGS,
   incomeReport,
@@ -20,13 +21,14 @@ import {
 } from "@/lib/income/report";
 import { type Expense, EXPENSE_LABELS, EXPENSES, RATTING, type Source, SOURCE_LABELS, SOURCES } from "@/lib/income/sources";
 import { syncStaleIncome } from "@/lib/income/sync";
+import { bucketEnd } from "@/lib/trade/report";
 import { deleteHistory } from "./actions";
+import { OpenOrders } from "./orders";
+import { Chip, eveTime, HiddenFilters, hrefWith, OTHER_COLOR, PALETTE, Tile } from "./shared";
+import { Trading } from "./trading";
 
 export const metadata: Metadata = { title: "Personal income" };
 
-// Categorical slots, dark steps, in validated order (checked against the site's surface colour).
-const PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
-const OTHER_COLOR = "#8a94a6";
 // Sources take the slots in their fixed order, so a source keeps its colour whatever else is filtered out.
 const SOURCE_COLORS = Object.fromEntries(SOURCES.map((s, i) => [s, PALETTE[i]])) as Record<Source, string>;
 // Expenses take the two slots left, taxes (the larger, nearest the zero line) in the one that stays
@@ -69,39 +71,8 @@ function toggleSource(current: Source[], source: Source): Source[] {
   return next.length === SOURCES.length ? [] : SOURCES.filter((s) => next.includes(s));
 }
 
-/** The page's URL with some filters changed; the rest carry over. */
-function hrefWith(filters: Filters, change: Partial<Filters>): string {
-  const next = { ...filters, ...change };
-  const params = new URLSearchParams();
-  if (next.range !== "30d") params.set("range", next.range);
-  // A grouping only sticks when the range stays; a new range picks its own default.
-  if ("grouping" in change || !("range" in change)) params.set("group", next.grouping);
-  for (const source of next.sources) params.append("s", source);
-  if (next.stack !== "character") params.set("stack", next.stack);
-  if (next.expenses) params.set("exp", "1");
-  for (const id of next.characterIds) params.append("c", String(id));
-  const query = params.toString();
-  return query ? `/income?${query}` : "/income";
-}
 
-function Chip({ href, active, swatch, children }: { href: string; active: boolean; swatch?: string; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      scroll={false}
-      aria-current={active ? "true" : undefined}
-      className={`flex items-center gap-1.5 rounded border px-2.5 py-1 text-sm ${active ? "border-accent text-accent" : "border-border hover:border-foreground"}`}
-    >
-      {swatch && <span className="inline-block size-2.5 rounded-sm" style={{ background: swatch }} />}
-      {children}
-    </Link>
-  );
-}
 
-/** "2026-10-18 13:05 EVE", in EVE time like everything else on the page. */
-function eveTime(date: Date): string {
-  return `${date.toISOString().slice(0, 16).replace("T", " ")} EVE`;
-}
 
 async function Income({ searchParams }: { searchParams: Promise<Params> }) {
   const viewer = await getViewer();
@@ -118,7 +89,8 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
         <p className="text-muted">
           On <Link href="/characters" className="text-accent hover:underline">Characters</Link>, choose{" "}
           <em>Allow income tracker</em> for each character you want to follow. It asks EVE for read access to that
-          character&apos;s wallet; only income and the taxes and fees on it are kept, and only you can see them.
+          character&apos;s wallet; only income, the taxes and fees on it and the character&apos;s market trades are kept,
+          and only you can see them.
         </p>
       </div>
     );
@@ -128,8 +100,13 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
   const own = new Set(relevant.map((c) => c.id));
   const filters: Filters = { ...parsed, characterIds: parsed.characterIds.filter((id) => own.has(id)) };
   const report = await incomeReport(viewer.userId, filters);
+  // A bucket from another range or grouping (an old link) looks into nothing.
+  const selected = report.buckets.find((bucket) => bucket.key === filters.at) ?? null;
+  filters.at = selected?.key ?? null;
   const systems = await topSystems(viewer.userId, filters, report.from);
-  const systemNames = await entityNames(systems.map((s) => s.solarSystemId));
+  const selectedEnd = selected ? [bucketEnd(selected.key, filters.grouping), report.to].sort()[0] : null;
+  const bucketSystems = selected ? await topSystems(viewer.userId, filters, selected.key, 5, selectedEnd!) : [];
+  const systemNames = await entityNames([...systems, ...bucketSystems].map((s) => s.solarSystemId));
 
   // Colour follows the character, by its place in the profile, so filtering never repaints anyone.
   const byId = new Map(relevant.map((c) => [c.id, c]));
@@ -176,6 +153,8 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
   const net = totals.amount - totals.expenses;
   const charges = Object.entries(totals.byCharge).sort(([, a], [, b]) => b - a);
   const ratting = earning.includes("bounties");
+  // Trade performance belongs with market income: shown whenever market sales are in the filter.
+  const trading = shownSources(filters).includes("market");
   const historyStart = relevant
     .map((c) => c.historyFrom)
     .filter((d): d is Date => d !== null)
@@ -256,7 +235,13 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
           </ul>
         )}
         {totals.amount > 0 ? (
-          <IncomeChart buckets={chartBuckets} series={series} grouping={filters.grouping} />
+          <IncomeChart
+            buckets={chartBuckets}
+            series={series}
+            grouping={filters.grouping}
+            selected={filters.at}
+            hrefs={chartBuckets.map((bucket) => hrefWith(filters, { at: bucket.key === filters.at ? null : bucket.key }))}
+          />
         ) : (
           <p className="py-16 text-center text-sm text-muted">No income in this range.</p>
         )}
@@ -305,6 +290,17 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
           </div>
         </details>
       </section>
+
+      {selected && (
+        <BucketBreakdown
+          bucket={selected}
+          filters={filters}
+          names={Object.fromEntries(relevant.map((c) => [c.id, c.name]))}
+          colorOf={colorOf}
+          systems={bucketSystems.map((s) => ({ ...s, name: systemNames[s.solarSystemId] ?? `System ${s.solarSystemId}` }))}
+          trading={trading}
+        />
+      )}
 
       <section className="space-y-3">
         <h2 className="font-medium">Per character</h2>
@@ -390,6 +386,15 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
         )}
       </section>
 
+      {trading && <Trading userId={viewer.userId} filters={filters} from={report.from} to={report.to} />}
+
+      <section id="orders" className="scroll-mt-4 space-y-3">
+        <h2 className="font-medium">Open market orders</h2>
+        <Suspense fallback={<p className="text-sm text-muted">Reading orders and their markets…</p>}>
+          <OpenOrders userId={viewer.userId} characterIds={filters.characterIds} colorOf={colorOf} />
+        </Suspense>
+      </section>
+
       {spent && (
         <section className="space-y-3">
           <h2 className="font-medium">Taxes and fees</h2>
@@ -472,15 +477,6 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
   );
 }
 
-function Tile({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <div className="rounded border border-border bg-surface p-3">
-      <dt className="text-xs text-muted">{label}</dt>
-      <dd className="mt-1 text-xl font-semibold">{value}</dd>
-      <dd className="mt-0.5 text-xs text-muted">{detail}</dd>
-    </div>
-  );
-}
 
 /**
  * Range, grouping and sources are links; characters are a plain GET form, so every filter works
@@ -539,13 +535,7 @@ function FilterBar({
       </div>
       {characters.length > 1 && (
         <form className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          {filters.range !== "30d" && <input type="hidden" name="range" value={filters.range} />}
-          <input type="hidden" name="group" value={filters.grouping} />
-          {filters.sources.map((source) => (
-            <input key={source} type="hidden" name="s" value={source} />
-          ))}
-          {filters.stack !== "character" && <input type="hidden" name="stack" value={filters.stack} />}
-          {filters.expenses && <input type="hidden" name="exp" value="1" />}
+          <HiddenFilters filters={filters} />
           {characters.map((c) => (
             <label key={c.id} className="flex items-center gap-1.5">
               <input type="checkbox" name="c" value={c.id} defaultChecked={selected(c.id)} className="accent-[var(--accent)]" />
@@ -562,5 +552,100 @@ function FilterBar({
         </form>
       )}
     </div>
+  );
+}
+
+/** One chart column looked into: where its income came from, by source and by character, and where bounties were earned. */
+function BucketBreakdown({
+  bucket,
+  filters,
+  names,
+  colorOf,
+  systems,
+  trading,
+}: {
+  bucket: Bucket;
+  filters: Filters;
+  names: Record<number, string>;
+  colorOf: (id: number) => string;
+  systems: { solarSystemId: number; name: string; amount: number }[];
+  trading: boolean;
+}) {
+  const label = `${filters.grouping === "week" ? "Week of " : ""}${formatBucket(bucket.key, filters.grouping)}${filters.grouping === "month" ? "" : ` ${bucket.key.slice(0, 4)}`}`;
+  const sources = SOURCES.filter((s) => bucket.bySource[s] > 0).sort((a, b) => bucket.bySource[b] - bucket.bySource[a]);
+  const people = Object.entries(bucket.byCharacter)
+    .map(([id, amount]) => ({ id: Number(id), amount }))
+    .filter((c) => c.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+  const bar = (amount: number, color: string) => (
+    <span className="relative inline-block h-1.5 w-24 overflow-hidden rounded bg-border">
+      <span className="absolute inset-y-0 left-0" style={{ width: `${bucket.total > 0 ? (amount / bucket.total) * 100 : 0}%`, background: color }} />
+    </span>
+  );
+  return (
+    <section className="space-y-3 rounded border border-accent/40 bg-surface p-4" aria-label={`Breakdown of ${label}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-medium">
+          {label}: {formatIsk(bucket.total)}
+          {filters.expenses && bucket.expenses > 0 && <span className="text-muted"> · net {formatIsk(bucket.total - bucket.expenses)}</span>}
+        </h2>
+        <Link href={hrefWith(filters, { at: null })} scroll={false} className="text-sm text-muted hover:text-foreground">
+          × close
+        </Link>
+      </div>
+      <div className="grid gap-6 text-sm md:grid-cols-3">
+        <div>
+          <h3 className="mb-2 text-xs text-muted">By source</h3>
+          <ul className="space-y-1.5">
+            {sources.map((s) => (
+              <li key={s} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate">{SOURCE_LABELS[s]}</span>
+                {bar(bucket.bySource[s], SOURCE_COLORS[s])}
+                <span className="w-16 text-right tabular-nums" title={formatIskExact(bucket.bySource[s])}>
+                  {formatIsk(bucket.bySource[s])}
+                </span>
+              </li>
+            ))}
+            {filters.expenses &&
+              EXPENSES.filter((e) => bucket.byExpense[e] > 0).map((e) => (
+                <li key={e} className="flex items-center gap-2 text-muted">
+                  <span className="min-w-0 flex-1 truncate">{EXPENSE_LABELS[e]}</span>
+                  <span className="w-16 text-right tabular-nums">{formatIsk(-bucket.byExpense[e])}</span>
+                </li>
+              ))}
+          </ul>
+          {trading && bucket.bySource.market > 0 && (
+            <Link href={hrefWith(filters, {}, "trading")} className="mt-3 inline-block text-accent hover:underline">
+              Which items sold, and their profit ↓
+            </Link>
+          )}
+        </div>
+        <div>
+          <h3 className="mb-2 text-xs text-muted">By character</h3>
+          <ul className="space-y-1.5">
+            {people.map((c) => (
+              <li key={c.id} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate">{names[c.id] ?? c.id}</span>
+                {bar(c.amount, colorOf(c.id))}
+                <span className="w-16 text-right tabular-nums">{formatIsk(c.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        {systems.length > 0 && (
+          <div>
+            <h3 className="mb-2 text-xs text-muted">Bounties by system</h3>
+            <ul className="space-y-1.5">
+              {systems.map((s) => (
+                <li key={s.solarSystemId} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                  <span className="w-16 text-right tabular-nums">{formatIsk(s.amount)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

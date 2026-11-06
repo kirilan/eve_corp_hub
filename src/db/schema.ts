@@ -254,11 +254,58 @@ export const walletEntries = pgTable(
     tax: isk("tax").notNull().default(0),
     // Set when the journal names a solar system, as it does for bounties.
     solarSystemId: eveId("solar_system_id"),
+    // The market transaction a sales tax line was charged on, so trade profit can take it off that sale.
+    transactionId: eveId("transaction_id"),
   },
   (t) => [
     primaryKey({ columns: [t.characterId, t.journalId] }),
     index("wallet_entries_character_date_idx").on(t.characterId, t.date),
   ],
+);
+
+/**
+ * Market transactions of characters that allow wallet tracking, buys and sells, for trade
+ * performance: what each item was bought for, so a sale's profit is known. Read with the same
+ * wallet consent as the journal; ESI keeps 30 days, so this table is what makes longer history
+ * possible. Deleted with the character, and with its income history.
+ */
+export const walletTransactions = pgTable(
+  "wallet_transactions",
+  {
+    characterId: eveId("character_id")
+      .notNull()
+      .references(() => characters.id, { onDelete: "cascade" }),
+    transactionId: eveId("transaction_id").notNull(),
+    date: timestamp("date", { withTimezone: true }).notNull(),
+    typeId: eveId("type_id").notNull(),
+    quantity: integer("quantity").notNull(),
+    unitPrice: isk("unit_price").notNull(),
+    isBuy: boolean("is_buy").notNull(),
+    locationId: eveId("location_id").notNull(),
+    // The other party: a trade between two of the profile's own characters is not a trade.
+    clientId: eveId("client_id").notNull(),
+    journalRefId: eveId("journal_ref_id").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.characterId, t.transactionId] }),
+    index("wallet_transactions_character_date_idx").on(t.characterId, t.date),
+  ],
+);
+
+/**
+ * Item types a profile keeps out of trade performance: things bought to use (a ship, its fit,
+ * ammunition), not to sell, which would otherwise wait forever as unsold stock.
+ */
+export const tradeExclusions = pgTable(
+  "trade_exclusions",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    typeId: eveId("type_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.typeId] })],
 );
 
 /** Wallet journal sync state per character, from its first sync attempt on. */
@@ -363,4 +410,5 @@ export type FittingVersion = typeof fittingVersions.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type Doctrine = typeof doctrines.$inferSelect;
 export type WalletEntry = typeof walletEntries.$inferSelect;
+export type WalletTransaction = typeof walletTransactions.$inferSelect;
 export type CronRun = typeof cronRuns.$inferSelect;

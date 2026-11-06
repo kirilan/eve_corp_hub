@@ -35,7 +35,7 @@ const FEATURES: { title: string; href: string; link: string; body: string }[] = 
     title: "Track your income",
     href: "/income",
     link: "Personal income",
-    body: "Chart bounties, ESS payouts, missions, market and contract sales and rewards across all your characters, with the taxes and fees on them. Only you can see it.",
+    body: "Chart bounties, ESS payouts, missions, market and contract sales and rewards across all your characters, with the taxes and fees on them. See which trades made a profit, what you bought and have not sold, and which open orders are outbid. Only you can see it.",
   },
   {
     title: "Reprocess or sell",
@@ -71,9 +71,10 @@ const STEPS: { title: string; body: React.ReactNode }[] = [
       <>
         Also on Characters, per character: <em>Allow fitting sync</em> (read and write its saved fittings, for importing
         and sending fits), <em>Allow income tracker</em> (read its wallet, for Personal income),{" "}
-        <em>Allow market reading</em> (read the markets of structures it can dock at, for 4-HWWF prices on Industry) and{" "}
-        <em>Allow skills &amp; standings</em> (estimate its yields, taxes and fees on Industry). Allow only what you use;
-        revoke on the same page at any time.
+        <em>Allow market reading</em> (read the markets of structures it can dock at, for 4-HWWF prices on Industry),{" "}
+        <em>Allow skills &amp; standings</em> (estimate its yields, taxes and fees on Industry) and{" "}
+        <em>Allow order tracking</em> (its open market orders and whether they are outbid, on Personal income). Allow only
+        what you use; revoke on the same page at any time.
       </>
     ),
   },
@@ -148,9 +149,10 @@ export default function Home({ searchParams }: PageProps<"/">) {
       <section className="max-w-3xl space-y-2 text-sm text-muted">
         <h2 className="text-base font-medium text-foreground">Your data</h2>
         <p>
-          Private fits are seen by you alone. Wallet data is used only for your own income page: only income and the taxes
-          and fees on it are stored, never transfers or purchases, and no other user, admins included, can see it. Access
-          tokens are stored encrypted. Unlinking a character deletes its tokens and its wallet history.
+          Private fits are seen by you alone. Wallet data is used only for your own income page: income, the taxes and
+          fees on it, and market transactions (for trade profit) are stored, never transfers, and no other user, admins
+          included, can see it. Open orders are read when you look and not stored. Access tokens are stored encrypted.
+          Unlinking a character deletes its tokens and its wallet history.
         </p>
       </section>
     </div>

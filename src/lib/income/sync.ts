@@ -1,18 +1,22 @@
 import "server-only";
-import { and, arrayContains, asc, eq, lt, or, isNull, sql } from "drizzle-orm";
+import { and, arrayContains, asc, eq, lt, max, or, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/db";
 import { lockOwnedCharacter } from "@/lib/auth/accounts";
 import { deadlineSignal, OPERATION_TIMEOUT_MS } from "@/lib/eve/deadline";
-import { characters, walletEntries, walletSyncs } from "@/db/schema";
+import { characters, walletEntries, walletSyncs, walletTransactions } from "@/db/schema";
 import { characterAccessToken, ConsentMissingError } from "@/lib/auth/tokens";
-import { esiPages } from "@/lib/eve/esi";
+import { esi, esiPages } from "@/lib/eve/esi";
 import { FEATURE_SCOPES, hasFeature } from "@/lib/eve/sso";
 import { expenseOf, sourceOf } from "./sources";
 
 // ESI caches the journal for an hour: syncing more often only re-reads the same pages.
 const SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const JOURNAL_DAYS = 30;
+// The transactions endpoint is not paged: each read returns the newest transactions before `from_id`,
+// up to a few thousand. A trader busy enough to need more reads than this has a gap, not an error.
+const TRANSACTION_READS = 10;
+const TRANSACTION_PAGE = 1000;
 
 export type JournalEntry = {
   id: number;
@@ -22,6 +26,18 @@ export type JournalEntry = {
   tax?: number;
   context_id?: number;
   context_id_type?: string;
+};
+
+export type EsiTransaction = {
+  transaction_id: number;
+  date: string;
+  type_id: number;
+  quantity: number;
+  unit_price: number;
+  is_buy: boolean;
+  location_id: number;
+  client_id: number;
+  journal_ref_id: number;
 };
 
 /** Whether the tracker keeps a journal line: ISK coming in from income, or going out on charges against it. */
@@ -42,7 +58,51 @@ export function walletRows(characterId: number, journal: JournalEntry[]): (typeo
       amount: entry.amount ?? 0,
       tax: entry.tax ?? 0,
       solarSystemId: entry.context_id_type === "system_id" ? (entry.context_id ?? null) : null,
+      // Sales tax names the sale it was charged on.
+      transactionId: entry.context_id_type === "market_transaction_id" ? (entry.context_id ?? null) : null,
     }));
+}
+
+export function transactionRows(characterId: number, transactions: EsiTransaction[]): (typeof walletTransactions.$inferInsert)[] {
+  return transactions
+    .filter((t) => t.quantity > 0)
+    .map((t) => ({
+      characterId,
+      transactionId: t.transaction_id,
+      date: new Date(t.date),
+      typeId: t.type_id,
+      quantity: t.quantity,
+      unitPrice: t.unit_price,
+      isBuy: Boolean(t.is_buy),
+      locationId: t.location_id,
+      clientId: t.client_id,
+      journalRefId: t.journal_ref_id,
+    }));
+}
+
+/**
+ * A character's market transactions newer than `knownUpTo` (the newest already stored), walking back
+ * with `from_id` until it reaches stored ones or the end of ESI's 30 days. Some overlap is harmless.
+ */
+async function readTransactions(characterId: number, token: string, knownUpTo: number | null, signal: AbortSignal): Promise<EsiTransaction[]> {
+  const out = new Map<number, EsiTransaction>();
+  let fromId: number | null = null;
+  for (let read = 0; read < TRANSACTION_READS; read++) {
+    const query: string = fromId === null ? "" : `?from_id=${fromId}`;
+    const page = await esi<EsiTransaction[]>(`/characters/${characterId}/wallet/transactions${query}`, { token, signal });
+    if (!Array.isArray(page)) throw new Error("wallet transactions are not a list");
+    let added = 0;
+    for (const t of page) {
+      if (out.has(t.transaction_id)) continue;
+      out.set(t.transaction_id, t);
+      added++;
+    }
+    if (added === 0 || page.length < TRANSACTION_PAGE) break;
+    const oldest = Math.min(...page.map((t) => t.transaction_id));
+    if (knownUpTo !== null && oldest <= knownUpTo) break;
+    fromId = oldest - 1;
+  }
+  return [...out.values()];
 }
 
 /**
@@ -71,8 +131,16 @@ export async function syncCharacterIncome(userId: string, characterId: number, p
   try {
     const token = await characterAccessToken(userId, characterId, "wallet", signal);
     signal.throwIfAborted();
-    const journal = await esiPages<JournalEntry>(`/characters/${characterId}/wallet/journal`, { token, signal });
+    const [{ newest }] = await db
+      .select({ newest: max(walletTransactions.transactionId) })
+      .from(walletTransactions)
+      .where(eq(walletTransactions.characterId, characterId));
+    const [journal, transactions] = await Promise.all([
+      esiPages<JournalEntry>(`/characters/${characterId}/wallet/journal`, { token, signal }),
+      readTransactions(characterId, token, newest ?? null, signal),
+    ]);
     const rows = walletRows(characterId, journal);
+    const trades = transactionRows(characterId, transactions);
     await db.transaction(async (tx) => {
       const character = await lockOwnedCharacter(tx, userId, characterId);
       if (!character || character.ownerHash !== claim.ownerHash || !hasFeature(character.scopes, "wallet")) return;
@@ -81,7 +149,19 @@ export async function syncCharacterIncome(userId: string, characterId: number, p
       signal.throwIfAborted();
       for (let i = 0; i < rows.length; i += 1000) {
         signal.throwIfAborted();
-        await tx.insert(walletEntries).values(rows.slice(i, i + 1000)).onConflictDoNothing();
+        // Lines stored before sales tax kept its transaction get it on the next read.
+        await tx
+          .insert(walletEntries)
+          .values(rows.slice(i, i + 1000))
+          .onConflictDoUpdate({
+            target: [walletEntries.characterId, walletEntries.journalId],
+            set: { transactionId: sql`excluded.transaction_id` },
+            setWhere: sql`${walletEntries.transactionId} IS NULL AND excluded.transaction_id IS NOT NULL`,
+          });
+      }
+      for (let i = 0; i < trades.length; i += 1000) {
+        signal.throwIfAborted();
+        await tx.insert(walletTransactions).values(trades.slice(i, i + 1000)).onConflictDoNothing();
       }
       const historyFrom = new Date(now.getTime() - JOURNAL_DAYS * 24 * 60 * 60 * 1000);
       await tx.update(walletSyncs).set({
@@ -158,6 +238,7 @@ export async function deleteIncomeHistory(userId: string, characterId: number): 
   await db.transaction(async (tx) => {
     if (!await lockOwnedCharacter(tx, userId, characterId)) throw new Error("that character is not linked to your profile");
     await tx.delete(walletEntries).where(eq(walletEntries.characterId, characterId));
+    await tx.delete(walletTransactions).where(eq(walletTransactions.characterId, characterId));
     await tx.delete(walletSyncs).where(eq(walletSyncs.characterId, characterId));
   });
 }

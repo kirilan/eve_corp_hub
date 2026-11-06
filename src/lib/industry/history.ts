@@ -27,7 +27,11 @@ export type SalesPace = { pace: Map<number, Pace>; warnings: string[] };
 
 /** Recent trading of these types in the hub's region, reading ESI for the ones not read since the last rollover. */
 export async function salesPace(hub: Hub, typeIds: number[], signal: AbortSignal): Promise<SalesPace> {
-  const { regionId, regionName } = HUBS[hub];
+  return regionPace(HUBS[hub].regionId, HUBS[hub].regionName, typeIds, signal);
+}
+
+/** Recent trading of these types in a region, reading ESI for the ones not read since the last rollover. */
+export async function regionPace(regionId: number, regionName: string, typeIds: number[], signal: AbortSignal): Promise<SalesPace> {
   const wanted = [...new Set(typeIds)];
   if (wanted.length === 0) return { pace: new Map(), warnings: [] };
   const rows = await db

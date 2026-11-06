@@ -26,6 +26,9 @@ export const FEATURE_SCOPES = {
   // Reprocessing calculator: skill levels and NPC standings, read when the owner picks the character to
   // estimate yields, taxes and fees. Only the few the calculator uses are kept, and only in the page.
   skills: ["esi-skills.read_skills.v1", "esi-characters.read_standings.v1"],
+  // Personal income: the character's open market orders and where each stands in its station's
+  // book (outbid, undercut). Read live when the owner opens the page; nothing is stored.
+  orders: ["esi-markets.read_character_orders.v1"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type Feature = keyof typeof FEATURE_SCOPES;

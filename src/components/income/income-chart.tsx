@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useLayoutEffect, useRef, useState } from "react";
 import { formatBucket, formatIsk, formatIskExact } from "@/lib/income/format";
 
@@ -39,17 +40,27 @@ function roundedEnd(x: number, y: number, w: number, h: number, r: number, down:
 /**
  * Stacked columns of income per bucket, with expenses stacked below the zero line when there are
  * expense series. Each column is one hover/focus target whose tooltip lists every series at that
- * bucket; the same numbers are in the data table beside the chart.
+ * bucket; the same numbers are in the data table beside the chart. With `hrefs`, clicking a column
+ * (or Enter on it) opens that bucket's breakdown, and `selected` marks the bucket being looked into.
  */
 export function IncomeChart({
   buckets,
   series,
   grouping,
+  hrefs,
+  selected = null,
+  labels = { above: "Income", below: "Expenses", net: "net" },
+  title = "Income over time",
 }: {
   buckets: ChartBucket[];
   series: ChartSeries[];
   grouping: "day" | "week" | "month";
+  hrefs?: string[];
+  selected?: string | null;
+  labels?: { above: string; below: string; net: string };
+  title?: string;
 }) {
+  const router = useRouter();
   const box = useRef<HTMLDivElement>(null);
   // Unknown until measured in the browser; the server renders a placeholder of the chart's height.
   const [width, setWidth] = useState<number | null>(null);
@@ -88,7 +99,7 @@ export function IncomeChart({
 
   return (
     <div ref={box} className="relative w-full select-none">
-      <svg width={width} height={HEIGHT} role="img" aria-label="Income over time" className="block">
+      <svg width={width} height={HEIGHT} role={hrefs ? undefined : "img"} aria-label={title} className="block">
         {ticks.map((tick) => (
           <g key={tick}>
             <line x1={PAD.left} x2={width - PAD.right} y1={y(tick)} y2={y(tick)} stroke={tick === 0 ? "#383835" : "#252d3a"} strokeWidth={1} />
@@ -123,19 +134,32 @@ export function IncomeChart({
               key={bucket.key}
               tabIndex={0}
               aria-label={
-                hasExpenses
-                  ? `${formatBucket(bucket.key, grouping)}: income ${formatIskExact(incomes[i])}, expenses ${formatIskExact(costs[i])}`
-                  : `${formatBucket(bucket.key, grouping)}: ${formatIskExact(incomes[i])}`
+                (hasExpenses
+                  ? `${formatBucket(bucket.key, grouping)}: ${labels.above.toLowerCase()} ${formatIskExact(incomes[i])}, ${labels.below.toLowerCase()} ${formatIskExact(costs[i])}`
+                  : `${formatBucket(bucket.key, grouping)}: ${formatIskExact(incomes[i])}`) + (hrefs ? ". Press Enter for the breakdown." : "")
+              }
+              role={hrefs ? "link" : undefined}
+              aria-current={selected === bucket.key ? "true" : undefined}
+              onClick={hrefs ? () => router.push(hrefs[i], { scroll: false }) : undefined}
+              onKeyDown={
+                hrefs
+                  ? (event) => {
+                      if (event.key === "Enter") router.push(hrefs[i], { scroll: false });
+                    }
+                  : undefined
               }
               onPointerEnter={() => setActive(i)}
               onPointerLeave={() => setActive((current) => (current === i ? null : current))}
               onFocus={() => setActive(i)}
               onBlur={() => setActive((current) => (current === i ? null : current))}
-              className="outline-none"
+              className={`outline-none ${hrefs ? "cursor-pointer" : ""}`}
+              opacity={selected && selected !== bucket.key ? 0.45 : 1}
             >
               {/* The hit target is the whole band, not just the painted column. */}
               <rect x={PAD.left + band * i} y={PAD.top} width={band} height={plotH} fill="transparent" />
-              {active === i && <rect x={PAD.left + band * i} y={PAD.top} width={band} height={plotH} fill="#e3e8ef" opacity={0.05} />}
+              {(active === i || selected === bucket.key) && (
+                <rect x={PAD.left + band * i} y={PAD.top} width={band} height={plotH} fill="#e3e8ef" opacity={selected === bucket.key ? 0.08 : 0.05} />
+              )}
               {segments(false)}
               {segments(true)}
             </g>
@@ -169,16 +193,23 @@ export function IncomeChart({
           </div>
           <div className="mb-1 text-sm font-semibold tabular-nums">
             {formatIskExact(tip.income - tip.expenses)}
-            {hasExpenses && <span className="font-normal text-muted"> net</span>}
+            {hasExpenses && <span className="font-normal text-muted"> {labels.net}</span>}
           </div>
-          {hasExpenses && <div className="mt-1 text-muted">Income {formatIsk(tip.income)}</div>}
+          {hasExpenses && (
+            <div className="mt-1 text-muted">
+              {labels.above} {formatIsk(tip.income)}
+            </div>
+          )}
           <TipLines series={series} values={tip.bucket.values} expense={false} />
           {tip.expenses > 0 && (
             <>
-              <div className="mt-1 text-muted">Expenses {formatIsk(tip.expenses)}</div>
+              <div className="mt-1 text-muted">
+                {labels.below} {formatIsk(tip.expenses)}
+              </div>
               <TipLines series={series} values={tip.bucket.values} expense />
             </>
           )}
+          {hrefs && <div className="mt-1.5 text-muted">Click for the breakdown</div>}
         </div>
       )}
     </div>

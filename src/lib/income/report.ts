@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, sql, sum } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lt, sql, sum } from "drizzle-orm";
 import { db } from "@/db";
 import { characters, walletEntries, walletSyncs } from "@/db/schema";
 import { hasFeature } from "@/lib/eve/sso";
@@ -27,7 +27,15 @@ export type Filters = {
   stack: Stack;
   // Show taxes and fees against income, which is then counted before corporation tax.
   expenses: boolean;
+  // The chart bucket being looked into (its first day), or null for the whole range.
+  at: string | null;
+  // Trade performance listed per item category or per item, and the one category opened, if any.
+  tradeView: TradeView;
+  category: number | null;
 };
+
+export const TRADE_VIEWS = ["category", "item"] as const;
+export type TradeView = (typeof TRADE_VIEWS)[number];
 
 const DEFAULT_GROUPING: Record<Range, Grouping> = { "7d": "day", "30d": "day", "90d": "week", "1y": "week", all: "month" };
 
@@ -48,8 +56,24 @@ export function parseFilters(params: Params): Filters {
   const sources = SOURCES.filter((s) => picked.has(s));
   const stack: Stack = one(params.stack) === "source" ? "source" : "character";
   const expenses = one(params.exp) === "1";
+  const rawAt = one(params.at);
+  // Only a bucket's own first day names it; anything else looks into nothing.
+  const at = rawAt && /^\d{4}-\d{2}-\d{2}$/.test(rawAt) && !Number.isNaN(Date.parse(`${rawAt}T00:00:00Z`)) && bucketOf(rawAt, grouping) === rawAt ? rawAt : null;
+  const tradeView = TRADE_VIEWS.find((v) => v === one(params.tv)) ?? "category";
+  const rawCategory = Number(one(params.cat));
+  const category = one(params.cat) !== undefined && Number.isSafeInteger(rawCategory) && rawCategory >= -1 ? rawCategory : null;
   // Every source picked is the same view as none picked: keep one URL for it.
-  return { range, grouping, characterIds, sources: sources.length === SOURCES.length ? [] : sources, stack, expenses };
+  return {
+    range,
+    grouping,
+    characterIds,
+    sources: sources.length === SOURCES.length ? [] : sources,
+    stack,
+    expenses,
+    at,
+    tradeView,
+    category,
+  };
 }
 
 /** YYYY-MM-DD of a date in UTC. */
@@ -279,7 +303,7 @@ export type SystemStats = { solarSystemId: number; amount: number; characters: n
  * Where bounties were earned, best first: the one source whose journal lines name a system. Empty
  * when the filters leave bounties out.
  */
-export async function topSystems(userId: string, filters: Filters, from: string, limit = 10): Promise<SystemStats[]> {
+export async function topSystems(userId: string, filters: Filters, from: string, limit = 10, to?: string): Promise<SystemStats[]> {
   if (filters.sources.length > 0 && !filters.sources.includes("bounties")) return [];
   const amount = sum(walletEntries.amount).mapWith(Number);
   const rows = await db
@@ -295,6 +319,7 @@ export async function topSystems(userId: string, filters: Filters, from: string,
         entryFilters(userId, { ...filters, sources: ["bounties"] }, from),
         gt(walletEntries.amount, 0),
         isNotNull(walletEntries.solarSystemId),
+        to ? lt(walletEntries.date, new Date(`${addDays(to, 1)}T00:00:00Z`)) : undefined,
       ),
     )
     .groupBy(walletEntries.solarSystemId)

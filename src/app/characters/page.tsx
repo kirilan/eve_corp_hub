@@ -6,18 +6,25 @@ import { Notice } from "@/components/notice";
 import { SignInButton } from "@/components/sign-in-button";
 import { listCharacters } from "@/lib/auth/accounts";
 import { getViewer } from "@/lib/auth/viewer";
-import { type Feature, featuresWith, hasFeature } from "@/lib/eve/sso";
+import { type Feature, FEATURES, featuresWith, hasFeature } from "@/lib/eve/sso";
 import { corporationLogoUrl, entityNames, portraitUrl } from "@/lib/eve/names";
 import { makeMain, revokeAccess, unlink } from "./actions";
 
 export const metadata: Metadata = { title: "Characters" };
 
-const LINK_URL = "/auth/login?intent=link&returnTo=/characters";
+/** SSO that links a character (or renews its token) asking for these features' scopes in one consent. */
+function loginUrl(features: readonly Feature[]): string {
+  const params = new URLSearchParams([["intent", "link"], ...features.map((f) => ["feature", f]), ["returnTo", "/characters"]]);
+  return `/auth/login?${params}`;
+}
+
+const LINK_URL = loginUrl([]);
+// Every feature at once: one EVE consent screen instead of one per feature.
+const ALL_ACCESS_URL = loginUrl(FEATURES);
 
 /** SSO for one more feature, repeating what the character already granted so the new token keeps it. */
 function grantUrl(scopes: string[], feature: Feature): string {
-  const params = new URLSearchParams([["intent", "link"], ...featuresWith(scopes, feature).map((f) => ["feature", f]), ["returnTo", "/characters"]]);
-  return `/auth/login?${params}`;
+  return loginUrl(featuresWith(scopes, feature));
 }
 
 const FEATURE_LABELS: Record<Feature, { on: string; off: string; grant: string }> = {
@@ -25,6 +32,7 @@ const FEATURE_LABELS: Record<Feature, { on: string; off: string; grant: string }
   wallet: { on: "Income tracker allowed", off: "No wallet access", grant: "Allow income tracker" },
   markets: { on: "Market reading allowed", off: "No market access", grant: "Allow market reading" },
   skills: { on: "Skills & standings allowed", off: "No skills access", grant: "Allow skills & standings" },
+  orders: { on: "Order tracking allowed", off: "No order access", grant: "Allow order tracking" },
 };
 
 export default function CharactersPage({ searchParams }: PageProps<"/characters">) {
@@ -43,8 +51,10 @@ export default function CharactersPage({ searchParams }: PageProps<"/characters"
         <p className="mt-2 max-w-2xl text-sm text-muted">
           Extra access is optional and per character. <em>Fitting sync</em> reads and writes saved fittings.{" "}
           <em>Income tracker</em> reads the wallet journal and keeps only income (bounties, ESS, missions, market and
-          contract sales, rewards) and the taxes and fees charged on it, visible to you alone; nothing else in the
-          wallet is stored.
+          contract sales, rewards) and the taxes and fees charged on it, plus the character&apos;s market
+          transactions (what it bought and sold, at what price) for trade profit, visible to you alone; nothing else
+          in the wallet is stored. <em>Order tracking</em> reads the character&apos;s open market orders to show
+          whether each is still the best price; orders are read when you open Personal income and not stored.
           Revoking access keeps the history already collected until you delete it on the{" "}
           <Link href="/income" className="text-accent hover:underline">Personal income</Link> page; unlinking a
           character deletes it.
@@ -123,6 +133,15 @@ async function CharacterList() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 text-sm">
+                {granted.length < FEATURES.length - 1 && (
+                  <a
+                    href={ALL_ACCESS_URL}
+                    className="rounded border border-accent px-3 py-1.5 font-medium text-accent hover:bg-accent/10"
+                    title={`One EVE login that allows everything: ${FEATURES.map((f) => FEATURE_LABELS[f].grant.replace(/^Allow /, "")).join(", ")}. Log in as ${character.name}.`}
+                  >
+                    Allow all
+                  </a>
+                )}
                 {(Object.keys(FEATURE_LABELS) as Feature[])
                   .filter((f) => !granted.includes(f))
                   .map((f) => (
@@ -161,9 +180,18 @@ async function CharacterList() {
           );
         })}
       </ul>
-      <a href={LINK_URL} className="inline-block rounded bg-accent px-4 py-2 font-medium text-black hover:brightness-110">
-        Add a character
-      </a>
+      <div className="flex flex-wrap items-center gap-3">
+        <a href={ALL_ACCESS_URL} className="inline-block rounded bg-accent px-4 py-2 font-medium text-black hover:brightness-110">
+          Add a character with all access
+        </a>
+        <a href={LINK_URL} className="inline-block rounded border border-border px-4 py-2 hover:border-accent">
+          Add a character, no access
+        </a>
+      </div>
+      <p className="max-w-2xl text-xs text-muted">
+        <em>Allow all</em> and <em>Add a character with all access</em> ask EVE for every feature above in one login. In
+        the EVE login window, pick the character you mean: the access goes to whichever character you log in as.
+      </p>
     </>
   );
 }

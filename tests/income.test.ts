@@ -15,9 +15,12 @@ vi.mock("@/lib/auth/tokens", async (importOriginal) => ({
   characterAccessToken,
 }));
 const esiPages = vi.hoisted(() => vi.fn());
+// Market transactions, read beside the journal: none unless a test says otherwise.
+const esi = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>(async () => []));
 vi.mock("@/lib/eve/esi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/eve/esi")>()),
   esiPages,
+  esi,
   affiliations: vi.fn(async () => []),
 }));
 vi.mock("@/lib/eve/sso", async (importOriginal) => ({
@@ -44,6 +47,7 @@ const journal = (entries: Partial<JournalEntry>[]): JournalEntry[] =>
 beforeEach(async () => {
   await db.execute(sql`TRUNCATE users, characters, sessions, wallet_entries, wallet_syncs CASCADE`);
   esiPages.mockReset();
+  esi.mockClear();
   characterAccessToken.mockClear();
 });
 
@@ -145,7 +149,9 @@ describe("buildReport", () => {
 
 describe("parseFilters", () => {
   it("defaults, picks a grouping that suits the range, and ignores junk", () => {
-    expect(parseFilters({})).toEqual({ range: "30d", grouping: "day", characterIds: [], sources: [], stack: "character", expenses: false });
+    expect(parseFilters({})).toEqual({
+      range: "30d", grouping: "day", characterIds: [], sources: [], stack: "character", expenses: false, at: null, tradeView: "category", category: null,
+    });
     expect(parseFilters({ range: "1y" }).grouping).toBe("week");
     expect(parseFilters({ range: "1y", group: "month", c: ["5", "x", "5", "-1"], s: ["market", "ess", "loot"], stack: "source", exp: "1" })).toEqual({
       range: "1y",
@@ -154,10 +160,24 @@ describe("parseFilters", () => {
       sources: ["ess", "market"],
       stack: "source",
       expenses: true,
+      at: null,
+      tradeView: "category",
+      category: null,
     });
     expect(parseFilters({ range: "forever", group: "hour", s: "loot" })).toMatchObject({ range: "30d", grouping: "day", sources: [] });
     // Every source picked is the unfiltered view.
     expect(parseFilters({ s: ["bounties", "ess", "missions", "market", "contracts", "rewards"] }).sources).toEqual([]);
+  });
+
+  it("looks into a chart bucket only by its first day, and opens trades by category or item", () => {
+    expect(parseFilters({ at: "2026-10-12" }).at).toBe("2026-10-12");
+    // 2026-10-14 is a Wednesday: not the first day of a week bucket.
+    expect(parseFilters({ range: "90d", at: "2026-10-14" }).at).toBeNull();
+    expect(parseFilters({ range: "90d", at: "2026-10-12" }).at).toBe("2026-10-12");
+    expect(parseFilters({ range: "all", at: "2026-10-01" }).at).toBe("2026-10-01");
+    expect(parseFilters({ at: "yesterday" }).at).toBeNull();
+    expect(parseFilters({ tv: "item", cat: "6" })).toMatchObject({ tradeView: "item", category: 6 });
+    expect(parseFilters({ tv: "bogus", cat: "ships" })).toMatchObject({ tradeView: "category", category: null });
   });
 });
 

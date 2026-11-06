@@ -70,9 +70,24 @@ const eveTime = (date: Date) => `${date.toISOString().slice(0, 16).replace("T", 
 
 /** Order books for these types at a hub, reading the market where the cache is stale. */
 export async function hubPrices(hub: Hub, typeIds: number[], viewerId: string, parentSignal?: AbortSignal): Promise<HubPrices> {
-  const signal = deadlineSignal(OPERATION_TIMEOUT_MS, parentSignal);
+  const { locationId, regionId, label, structure } = HUBS[hub];
+  return locationPrices({ locationId, regionId, label, structure }, typeIds, viewerId, { signal: parentSignal });
+}
+
+/** A market to price at: an NPC station, read from its region's public feed, or a player structure. */
+export type MarketLocation = { locationId: number; regionId: number; label: string; structure: boolean; ownReadersOnly?: boolean };
+
+/** Order books for these types at any station or structure, reading the market where the cache is older than `maxAgeMs`. */
+export async function locationPrices(
+  location: MarketLocation,
+  typeIds: number[],
+  viewerId: string,
+  options: { signal?: AbortSignal; maxAgeMs?: number } = {},
+): Promise<HubPrices> {
+  const signal = deadlineSignal(OPERATION_TIMEOUT_MS, options.signal);
   const wanted = [...new Set(typeIds)];
-  return HUBS[hub].structure ? structurePrices(hub, wanted, viewerId, signal) : regionPrices(hub, wanted, signal);
+  const maxAge = options.maxAgeMs ?? PRICE_MAX_AGE_MS;
+  return location.structure ? structurePrices(location, wanted, viewerId, signal, maxAge) : regionPrices(location, wanted, signal, maxAge);
 }
 
 async function cachedRows(locationId: number, typeIds: number[]) {
@@ -83,10 +98,10 @@ async function cachedRows(locationId: number, typeIds: number[]) {
     .where(and(eq(marketPrices.locationId, locationId), inArray(marketPrices.typeId, typeIds)));
 }
 
-async function regionPrices(hub: Hub, typeIds: number[], signal: AbortSignal): Promise<HubPrices> {
-  const { locationId, regionId } = HUBS[hub];
+async function regionPrices(location: MarketLocation, typeIds: number[], signal: AbortSignal, maxAge: number): Promise<HubPrices> {
+  const { locationId, regionId, label } = location;
   const known = new Map((await cachedRows(locationId, typeIds)).map((row) => [row.typeId, row]));
-  const cutoff = Date.now() - PRICE_MAX_AGE_MS;
+  const cutoff = Date.now() - maxAge;
   const stale = typeIds.filter((typeId) => (known.get(typeId)?.fetchedAt.getTime() ?? 0) < cutoff);
 
   let failures = 0;
@@ -98,7 +113,7 @@ async function regionPrices(hub: Hub, typeIds: number[], signal: AbortSignal): P
       return { locationId, typeId, ...(booksFrom(orders, locationId).get(typeId) ?? EMPTY), fetchedAt: new Date() };
     } catch (error) {
       failures++;
-      console.warn(`market read failed for type ${typeId} at ${hub}`, error);
+      console.warn(`market read failed for type ${typeId} at ${label}`, error);
       return null;
     }
   });
@@ -134,13 +149,13 @@ async function regionPrices(hub: Hub, typeIds: number[], signal: AbortSignal): P
   };
 }
 
-async function structurePrices(hub: Hub, typeIds: number[], viewerId: string, signal: AbortSignal): Promise<HubPrices> {
-  const { locationId, label } = HUBS[hub];
+async function structurePrices(location: MarketLocation, typeIds: number[], viewerId: string, signal: AbortSignal, maxAge: number): Promise<HubPrices> {
+  const { locationId, label } = location;
   const snapshot = async () => (await db.select().from(marketSnapshots).where(eq(marketSnapshots.locationId, locationId)))[0];
   let current = await snapshot();
   let outcome: ReadOutcome | null = null;
-  if (!current?.fetchedAt || current.fetchedAt.getTime() < Date.now() - PRICE_MAX_AGE_MS) {
-    outcome = await readStructureMarket(hub, viewerId, signal);
+  if (!current?.fetchedAt || current.fetchedAt.getTime() < Date.now() - maxAge) {
+    outcome = await readStructure(location, viewerId, signal);
     current = await snapshot();
   }
 
@@ -165,17 +180,23 @@ async function structurePrices(hub: Hub, typeIds: number[], viewerId: string, si
 
 type Reader = { id: number; userId: string; name: string };
 
-/** Characters that allow market reading: the last one that worked, then the viewer's own, then anyone's. */
-async function marketReaders(viewerId: string, lastReader: number | null): Promise<Reader[]> {
+/**
+ * Characters that allow market reading: the last one that worked, then the viewer's own, then
+ * anyone's. With `ownOnly`, only the viewer's: for a structure no one else is known to dock at.
+ */
+async function marketReaders(viewerId: string, lastReader: number | null, ownOnly = false): Promise<Reader[]> {
   return db
     .select({ id: characters.id, userId: characters.userId, name: characters.name })
     .from(characters)
-    .where(arrayContains(characters.scopes, [...FEATURE_SCOPES.markets]))
+    .where(and(arrayContains(characters.scopes, [...FEATURE_SCOPES.markets]), ownOnly ? eq(characters.userId, viewerId) : undefined))
     .orderBy(sql`${characters.id} = ${lastReader ?? 0} desc`, sql`${characters.userId} = ${viewerId} desc`, asc(characters.id))
     .limit(READER_TRIES);
 }
 
-type ReadOutcome = { status: "read"; orders: number } | { status: "busy" } | { status: "failed"; error: string };
+export type ReadOutcome = { status: "read"; orders: number } | { status: "busy" } | { status: "failed"; error: string };
+
+/** A player structure whose market can be read: a hub, or wherever an open order sits. */
+export type MarketStructure = { locationId: number; label: string; ownReadersOnly?: boolean };
 
 function readError(error: unknown, reader: Reader, label: string): string {
   if (error instanceof ConsentMissingError) return `${reader.name} no longer allows market reading`;
@@ -188,8 +209,12 @@ function readError(error: unknown, reader: Reader, label: string): string {
  * the first takes a short lease on the snapshot row, the others keep using the prices already there.
  */
 export async function readStructureMarket(hub: Hub, viewerId: string, parentSignal?: AbortSignal): Promise<ReadOutcome> {
+  return readStructure({ locationId: HUBS[hub].locationId, label: HUBS[hub].label }, viewerId, parentSignal);
+}
+
+export async function readStructure(structure: MarketStructure, viewerId: string, parentSignal?: AbortSignal): Promise<ReadOutcome> {
   const signal = deadlineSignal(OPERATION_TIMEOUT_MS, parentSignal);
-  const { locationId, label } = HUBS[hub];
+  const { locationId, label } = structure;
   const now = new Date();
   await db.insert(marketSnapshots).values({ locationId, attemptedAt: new Date(0) }).onConflictDoNothing();
   const [claimed] = await db
@@ -199,7 +224,7 @@ export async function readStructureMarket(hub: Hub, viewerId: string, parentSign
     .returning();
   if (!claimed) return { status: "busy" };
 
-  const readers = await marketReaders(viewerId, claimed.readerCharacterId);
+  const readers = await marketReaders(viewerId, claimed.readerCharacterId, structure.ownReadersOnly);
   let error = "no character allows market reading; one that can dock there must allow it on the Characters page";
   for (const reader of readers) {
     try {
@@ -219,7 +244,7 @@ export async function readStructureMarket(hub: Hub, viewerId: string, parentSign
       return { status: "read", orders: orders.length };
     } catch (failure) {
       error = readError(failure, reader, label);
-      if (!(failure instanceof ConsentMissingError || failure instanceof EsiError)) console.warn(`market read of ${hub} failed`, failure);
+      if (!(failure instanceof ConsentMissingError || failure instanceof EsiError)) console.warn(`market read of ${label} failed`, failure);
     }
   }
   await db.update(marketSnapshots).set({ error }).where(eq(marketSnapshots.locationId, locationId));
