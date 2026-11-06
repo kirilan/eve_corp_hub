@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, ilike, max, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, max, or, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db, type Tx } from "@/db";
 import { characters, eveTypes, fittings, fittingVersions, users, type Fitting, type FittingItem } from "@/db/schema";
@@ -8,9 +8,10 @@ import type { Viewer } from "@/lib/auth/accounts";
 import { characterAccessToken } from "@/lib/auth/tokens";
 import { randomToken } from "@/lib/crypto";
 import { esi, EsiError } from "@/lib/eve/esi";
+import { deadlineSignal, OPERATION_TIMEOUT_MS } from "@/lib/eve/deadline";
 import { typesById, typesByName } from "@/lib/eve/types";
 import { canDeleteFitting, canEditFitting, canShareWithCorporation, canViewFitting, corporationOf } from "@/lib/permissions";
-import { buildFit, EftError, fitSignature, namesIn, parseEft } from "./eft";
+import { buildFit, EftError, fitSignature, MAX_EFT_CHARS, namesIn, parseEft } from "./eft";
 
 /** A problem worth showing the user as-is (bad input, missing permission), as opposed to a bug. */
 export class FittingError extends Error {}
@@ -20,7 +21,7 @@ export type Visibility = (typeof VISIBILITIES)[number];
 
 // ESI's own limits for POST /characters/{id}/fittings, enforced up front so every stored fit can go to the game.
 export const fitInput = z.object({
-  eft: z.string().trim().min(1, "Paste a fit in EFT format."),
+  eft: z.string().max(MAX_EFT_CHARS, `Keep fits under ${MAX_EFT_CHARS} characters.`).trim().min(1, "Paste a fit in EFT format."),
   name: z.string().trim().max(50, "Names are limited to 50 characters in game.").optional(),
   description: z.string().trim().max(500, "Descriptions are limited to 500 characters in game.").default(""),
   visibility: z.enum(VISIBILITIES).default("private"),
@@ -140,6 +141,9 @@ async function auditSharing(tx: Tx, viewer: Viewer, before: Fitting, after: { vi
 
 export async function updateFitting(viewer: Viewer, id: string, input: FitInput): Promise<{ warnings: string[] }> {
   const data = fitInput.parse(input);
+  // Authorize before external type lookups; the write transaction checks again under its lock.
+  const existing = await viewableFitting(viewer, id);
+  if (!existing || !canEditFitting(viewer, existing)) throw new FittingError("Fit not found.");
   const fit = await fitFromEft(data.eft, data.name);
   const contents = { name: fit.name, description: data.description, shipTypeId: fit.shipTypeId, items: fit.items };
   await db.transaction(async (tx) => {
@@ -245,6 +249,15 @@ export async function viewableFitting(viewer: Viewer | null, id: string, shareTo
   return row && canViewFitting(viewer, row, shareToken) ? row : null;
 }
 
+/** One query, the same permission rules, and the caller's ordering (without duplicate ids). */
+export async function viewableFittings(viewer: Viewer | null, ids: string[]): Promise<FitRow[]> {
+  const wanted = [...new Set(ids)].filter((id) => z.uuid().safeParse(id).success);
+  if (wanted.length === 0) return [];
+  const rows = await fitQuery().where(inArray(fittings.id, wanted));
+  const allowed = new Map(rows.filter((fit) => canViewFitting(viewer, fit)).map((fit) => [fit.id, fit]));
+  return wanted.flatMap((id) => allowed.has(id) ? [allowed.get(id)!] : []);
+}
+
 export async function fittingByShareToken(viewer: Viewer | null, shareToken: string) {
   const [row] = await fitQuery().where(eq(fittings.shareToken, shareToken));
   return row && canViewFitting(viewer, row, shareToken) ? row : null;
@@ -298,10 +311,27 @@ function search(query: string | undefined): SQL | undefined {
   return or(ilike(fittings.name, pattern), ilike(eveTypes.name, pattern));
 }
 
-export async function listOwnFittings(viewer: Viewer, query?: string) {
-  return fitQuery()
+/** Only list fields are read; full contents and share tokens stay out of collection queries. */
+function fitListQuery() {
+  return db.select({
+    id: fittings.id, name: fittings.name, shipTypeId: fittings.shipTypeId,
+    shipName: eveTypes.name, visibility: fittings.visibility, ownerMainName: characters.name,
+  }).from(fittings)
+    .leftJoin(eveTypes, eq(eveTypes.id, fittings.shipTypeId))
+    .leftJoin(users, eq(users.id, fittings.ownerId))
+    .leftJoin(characters, and(eq(characters.id, users.mainCharacterId), eq(characters.userId, users.id)));
+}
+
+export type FitSummary = Awaited<ReturnType<typeof listLibrary>>[number];
+export const FIT_PAGE_SIZE = 50;
+
+export async function listOwnFittings(viewer: Viewer, query?: string, requestedPage = 1) {
+  const page = Number.isSafeInteger(requestedPage) && requestedPage >= 1 && requestedPage <= 10_000 ? requestedPage : 1;
+  const rows = await fitListQuery()
     .where(and(eq(fittings.ownerId, viewer.userId), search(query)))
-    .orderBy(eveTypes.name, fittings.name);
+    .orderBy(eveTypes.name, fittings.name, fittings.id)
+    .limit(FIT_PAGE_SIZE + 1).offset((page - 1) * FIT_PAGE_SIZE);
+  return { fits: rows.slice(0, FIT_PAGE_SIZE), hasMore: rows.length > FIT_PAGE_SIZE, page };
 }
 
 /** Shared fits from the viewer's (main's) corporation, or the public library. */
@@ -312,7 +342,7 @@ export async function listLibrary(viewer: Viewer | null, scope: "corporation" | 
     scope === "corporation"
       ? and(eq(fittings.visibility, "corporation"), eq(fittings.corporationId, corporationId!))
       : eq(fittings.visibility, "public");
-  return fitQuery()
+  return fitListQuery()
     .where(and(scoped, search(query)))
     .orderBy(desc(fittings.updatedAt))
     .limit(200);
@@ -383,14 +413,15 @@ export type BulkSendResult = { id: string; name: string; status: "sent" | "skipp
  * A failure on one fit does not stop the rest, except when the character's access itself is gone.
  */
 export async function sendManyToGame(viewer: Viewer, ids: string[], characterId: number): Promise<BulkSendResult[]> {
+  const signal = deadlineSignal(OPERATION_TIMEOUT_MS);
   const unique = [...new Set(ids)];
   if (unique.length === 0) throw new FittingError("Select at least one fit.");
   if (unique.length > BULK_SEND_LIMIT) throw new FittingError(`Send at most ${BULK_SEND_LIMIT} fits at a time.`);
 
-  const fits = (await Promise.all(unique.map((id) => viewableFitting(viewer, id)))).filter((fit) => fit !== null);
-  const token = await characterAccessToken(viewer.userId, characterId, "fittings");
+  const fits = await viewableFittings(viewer, unique);
+  const token = await characterAccessToken(viewer.userId, characterId, "fittings", signal);
   const inGame = new Set(
-    (await esi<GameFitting[]>(`/characters/${characterId}/fittings`, { token })).map((fit) => fitSignature(fit.ship_type_id, fit.items)),
+    (await esi<GameFitting[]>(`/characters/${characterId}/fittings`, { token, signal })).map((fit) => fitSignature(fit.ship_type_id, fit.items)),
   );
 
   const results: BulkSendResult[] = [];
@@ -404,6 +435,7 @@ export async function sendManyToGame(viewer: Viewer, ids: string[], characterId:
       await esi(`/characters/${characterId}/fittings`, {
         method: "POST",
         token,
+        signal,
         body: { name: fit.name.slice(0, 50), description: fit.description.slice(0, 500), ship_type_id: fit.shipTypeId, items: fit.items },
       });
       inGame.add(signature);
@@ -412,7 +444,7 @@ export async function sendManyToGame(viewer: Viewer, ids: string[], characterId:
       if (!(error instanceof EsiError)) throw error;
       results.push({ id: fit.id, name: fit.name, status: "failed", detail: error.message });
       // A rejected token fails every remaining send the same way; report it once and stop.
-      if (error.status === 401 || error.status === 403) break;
+      if (error.status === 401 || error.status === 403 || signal.aborted) break;
     }
   }
   return results;

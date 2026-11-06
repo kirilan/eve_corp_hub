@@ -6,8 +6,9 @@ import { completeSignIn } from "@/lib/auth/accounts";
 import { ConsentMissingError } from "@/lib/auth/tokens";
 import { EsiError } from "@/lib/eve/esi";
 import { FEATURE_SCOPES, featuresWith } from "@/lib/eve/sso";
+import { typesByName } from "@/lib/eve/types";
 import type { TypeInfo } from "@/lib/fittings/eft";
-import { AppraisalError, appraiseItems } from "@/lib/industry/appraisal";
+import { AppraisalError, appraiseItems, MAX_INPUT_LINES } from "@/lib/industry/appraisal";
 import { HUBS } from "@/lib/industry/hubs";
 import { booksFrom, type EsiOrder, hubPrices, PRICE_MAX_AGE_MS, structureMarketStatus } from "@/lib/industry/market";
 import { characterRates } from "@/lib/industry/character";
@@ -433,8 +434,8 @@ describe("hubPrices at 4-HWWF", () => {
     esiPages.mockResolvedValue([order(34, 6, 500, true, HWWF), order(34, 7, 100, false, HWWF), order(35, 15, 10, false, HWWF)]);
 
     const prices = await hubPrices("4-hwwf", [34, 35, 36], other);
-    expect(characterAccessToken).toHaveBeenCalledWith(reader, 1, "markets");
-    expect(esiPages).toHaveBeenCalledWith(`/markets/structures/${HWWF}`, { token: "token", maxPages: 200 });
+    expect(characterAccessToken).toHaveBeenCalledWith(reader, 1, "markets", expect.any(AbortSignal));
+    expect(esiPages).toHaveBeenCalledWith(`/markets/structures/${HWWF}`, { token: "token", maxPages: 200, signal: expect.any(AbortSignal) });
     expect(prices.available).toBe(true);
     expect(prices.books.get(34)).toEqual({ buy: [[6, 500]], sell: [[7, 100]] });
     // Read whole, so a type missing from it has no orders there.
@@ -534,4 +535,31 @@ describe("characterRates", () => {
       standings: { [HUBS.jita.owner.id]: 1.5, [HUBS.jita.faction.id]: -0.5 },
     });
   });
+});
+
+describe("appraisal input budget", () => {
+  it("rejects too many lines before type resolution or market reads", async () => {
+    vi.mocked(typesByName).mockClear();
+    await expect(appraiseItems("unused", Array.from({ length: MAX_INPUT_LINES + 1 }, (_, i) => `Unknown ${i}`).join("\n"), "jita"))
+      .rejects.toThrow(/item lines/);
+    expect(typesByName).not.toHaveBeenCalled();
+    expect(esiPages).not.toHaveBeenCalled();
+  });
+});
+
+it("keeps the complete structure snapshot when ESI reports more pages than the cap", async () => {
+  const viewer = await profile(1);
+  await db.insert(marketSnapshots).values({ locationId: HWWF, fetchedAt: new Date(0), attemptedAt: new Date(0) });
+  await db.insert(marketPrices).values({ locationId: HWWF, typeId: 34, buy: [[6, 1]], sell: [], fetchedAt: new Date(0) });
+  const actual = await vi.importActual<typeof import("@/lib/eve/esi")>("@/lib/eve/esi");
+  esiPages.mockImplementationOnce(actual.esiPages);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([order(34, 99, 1, true, HWWF)]), { headers: { "X-Pages": "201" } })));
+  try {
+    const prices = await hubPrices("4-hwwf", [34], viewer);
+    expect(prices.books.get(34)).toEqual({ buy: [[6, 1]], sell: [] });
+    expect(prices.warnings[0]).toMatch(/incomplete/);
+    expect((await db.select().from(marketSnapshots))[0].fetchedAt).toEqual(new Date(0));
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

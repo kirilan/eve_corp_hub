@@ -35,9 +35,10 @@ export default function FittingsPage({ searchParams }: PageProps<"/fittings">) {
 async function Fits({ searchParams }: { searchParams: PageProps<"/fittings">["searchParams"] }) {
   const viewer = await getViewer();
   if (!viewer) return <SignInButton returnTo="/fittings" />;
-  const { q } = await searchParams;
+  const { q, page: requestedPage } = await searchParams;
   const query = typeof q === "string" ? q : undefined;
-  const fits = await listOwnFittings(viewer, query);
+  const { fits, page, hasMore } = await listOwnFittings(viewer, query, typeof requestedPage === "string" ? Number(requestedPage) : 1);
+  const pageHref = (target: number) => `/fittings?${new URLSearchParams({ ...(query ? { q: query } : {}), page: String(target) })}`;
   return (
     <div className="space-y-4">
       <SearchBox defaultValue={query} />
@@ -46,6 +47,13 @@ async function Fits({ searchParams }: { searchParams: PageProps<"/fittings">["se
         viewer={viewer}
         empty={query ? "No fits match that search." : "No fits yet. Paste one with New fit, or import the fits saved on your characters."}
       />
+      {(page > 1 || hasMore) && (
+        <nav aria-label="Fittings pages" className="flex items-center gap-4 text-sm">
+          {page > 1 && <Link href={pageHref(page - 1)} prefetch={false} className="text-accent hover:underline">Previous</Link>}
+          <span className="text-muted">Page {page}</span>
+          {hasMore && <Link href={pageHref(page + 1)} prefetch={false} className="text-accent hover:underline">Next</Link>}
+        </nav>
+      )}
     </div>
   );
 }

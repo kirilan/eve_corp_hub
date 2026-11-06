@@ -1,6 +1,6 @@
 import { listCharacters, type Viewer } from "@/lib/auth/accounts";
 import { hasFeature } from "@/lib/eve/sso";
-import { BULK_SEND_LIMIT, type FitRow } from "@/lib/fittings/store";
+import { BULK_SEND_LIMIT, type FitSummary } from "@/lib/fittings/store";
 import { FitList } from "./fit-list";
 import { FitPicker } from "./fit-picker";
 
@@ -11,7 +11,7 @@ export async function FitCollection({
   showOwner = false,
   empty,
 }: {
-  fits: FitRow[];
+  fits: FitSummary[];
   viewer: Viewer | null;
   showOwner?: boolean;
   empty: React.ReactNode;

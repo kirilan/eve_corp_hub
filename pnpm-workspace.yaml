@@ -2,6 +2,8 @@ allowBuilds:
   esbuild: true
   sharp: false
   unrs-resolver: false
+overrides:
+  '@vercel/cli-config>zod': 4.6.7
 minimumReleaseAgeExclude:
   - '@next/env@16.4.1'
   - '@next/eslint-plugin-next@16.4.1'

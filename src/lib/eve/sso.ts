@@ -2,6 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { env } from "@/lib/env";
+import { deadlineSignal, REQUEST_TIMEOUT_MS } from "./deadline";
 
 // From https://login.eveonline.com/.well-known/oauth-authorization-server (checked 2026-10-15).
 const ISSUER = "https://login.eveonline.com";
@@ -90,9 +91,10 @@ export class SsoError extends Error {
   }
 }
 
-async function postForm(url: string, fields: Record<string, string>): Promise<Response> {
+async function postForm(url: string, fields: Record<string, string>, signal?: AbortSignal): Promise<Response> {
   const { EVE_CLIENT_ID, EVE_CLIENT_SECRET } = env();
   return fetch(url, {
+    signal: deadlineSignal(REQUEST_TIMEOUT_MS, signal),
     method: "POST",
     headers: {
       // Confidential client: credentials go in the Basic header only; CCP rejects them duplicated in the body.
@@ -105,8 +107,8 @@ async function postForm(url: string, fields: Record<string, string>): Promise<Re
   });
 }
 
-async function tokenRequest(fields: Record<string, string>): Promise<TokenResponse> {
-  const response = await postForm(TOKEN_URL, fields);
+async function tokenRequest(fields: Record<string, string>, signal?: AbortSignal): Promise<TokenResponse> {
+  const response = await postForm(TOKEN_URL, fields, signal);
   const body = (await response.json().catch(() => ({}))) as Partial<TokenResponse> & {
     error?: string;
     error_description?: string;
@@ -125,8 +127,8 @@ export function exchangeCode(code: string, verifier: string): Promise<TokenRespo
   return tokenRequest({ grant_type: "authorization_code", code, redirect_uri: redirectUri(), code_verifier: verifier });
 }
 
-export function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
-  return tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken });
+export function refreshAccessToken(refreshToken: string, signal?: AbortSignal): Promise<TokenResponse> {
+  return tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken }, signal);
 }
 
 /** Best effort: a revoke that fails leaves a token that is useless to anyone without our client secret. */

@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { doctrineFittings, doctrines, fittings, type Doctrine } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { Viewer } from "@/lib/auth/accounts";
-import { FittingError, viewableFitting, type FitRow } from "@/lib/fittings/store";
+import { FittingError, viewableFitting, viewableFittings, type FitRow } from "@/lib/fittings/store";
 import { canManageDoctrines, canViewFitting, corporationOf, fitsDoctrine } from "@/lib/permissions";
 
 export const doctrineInput = z.object({
@@ -46,9 +46,8 @@ export async function doctrineWithFits(viewer: Viewer | null, id: string) {
     .from(doctrineFittings)
     .where(eq(doctrineFittings.doctrineId, id))
     .orderBy(asc(doctrineFittings.addedAt));
-  const fits = (await Promise.all(linked.map(({ fittingId }) => viewableFitting(viewer, fittingId)))).filter(
-    (fit): fit is FitRow => fit !== null && fitsDoctrine(fit, doctrine.corporationId),
-  );
+  const fits = (await viewableFittings(viewer, linked.map(({ fittingId }) => fittingId)))
+    .filter((fit) => fitsDoctrine(fit, doctrine.corporationId));
   return { doctrine, fits, hidden: linked.length - fits.length };
 }
 

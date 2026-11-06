@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { type Character, characters, corporationDirectors, users } from "@/db/schema";
+import { type Character, characters, corporationDirectors, users, walletSyncs } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { affiliations, type Affiliation } from "@/lib/eve/esi";
 import { revokeRefreshToken, type TokenResponse, type VerifiedCharacter } from "@/lib/eve/sso";
@@ -114,6 +114,13 @@ export async function setMainCharacter(userId: string, characterId: number): Pro
   await db.update(users).set({ mainCharacterId: characterId }).where(eq(users.id, userId));
 }
 
+/** Lock ownership for a short mutation; never hold this lock while fetching wallet data. */
+export async function lockOwnedCharacter(tx: Tx, userId: string, characterId: number): Promise<Character | undefined> {
+  const [character] = await tx.select().from(characters)
+    .where(and(eq(characters.id, characterId), eq(characters.userId, userId))).for("update");
+  return character;
+}
+
 export async function unlinkCharacter(userId: string, characterId: number): Promise<void> {
   const refreshToken = await db.transaction(async (tx) => {
     const [user] = await tx.select().from(users).where(eq(users.id, userId)).for("update");
@@ -133,16 +140,16 @@ export async function unlinkCharacter(userId: string, characterId: number): Prom
 
 /** Drops a feature's consent by forgetting the token; the owner can grant it again any time. */
 export async function revokeCharacterScopes(userId: string, characterId: number): Promise<void> {
-  const [cleared] = await db
-    .select({ refreshTokenEnc: characters.refreshTokenEnc })
-    .from(characters)
-    .where(and(eq(characters.id, characterId), eq(characters.userId, userId)));
-  if (!cleared) throw new Error("that character is not linked to your profile");
-  await db
-    .update(characters)
-    .set({ scopes: [], refreshTokenEnc: null, accessTokenEnc: null, accessTokenExpiresAt: null, tokenError: null })
-    .where(eq(characters.id, characterId));
-  if (cleared.refreshTokenEnc) await revokeRefreshToken(decrypt(cleared.refreshTokenEnc));
+  const token = await db.transaction(async (tx) => {
+    const character = await lockOwnedCharacter(tx, userId, characterId);
+    if (!character) throw new Error("that character is not linked to your profile");
+    await tx.update(characters)
+      .set({ scopes: [], refreshTokenEnc: null, accessTokenEnc: null, accessTokenExpiresAt: null, tokenError: null })
+      .where(eq(characters.id, characterId));
+    await tx.update(walletSyncs).set({ leaseId: null, leaseExpiresAt: null }).where(eq(walletSyncs.characterId, characterId));
+    return character.refreshTokenEnc;
+  });
+  if (token) await revokeRefreshToken(decrypt(token));
 }
 
 const AFFILIATION_MAX_AGE_MS = 60 * 60 * 1000; // ESI caches /characters/affiliation for an hour anyway

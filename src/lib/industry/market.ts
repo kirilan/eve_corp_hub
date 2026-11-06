@@ -1,4 +1,5 @@
 import "server-only";
+import { deadlineSignal, OPERATION_TIMEOUT_MS } from "@/lib/eve/deadline";
 import { and, arrayContains, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { characters, marketPrices, marketSnapshots, type PriceLevel } from "@/db/schema";
@@ -68,9 +69,10 @@ function oldest(dates: Date[]): Date | null {
 const eveTime = (date: Date) => `${date.toISOString().slice(0, 16).replace("T", " ")} EVE`;
 
 /** Order books for these types at a hub, reading the market where the cache is stale. */
-export async function hubPrices(hub: Hub, typeIds: number[], viewerId: string): Promise<HubPrices> {
+export async function hubPrices(hub: Hub, typeIds: number[], viewerId: string, parentSignal?: AbortSignal): Promise<HubPrices> {
+  const signal = deadlineSignal(OPERATION_TIMEOUT_MS, parentSignal);
   const wanted = [...new Set(typeIds)];
-  return HUBS[hub].structure ? structurePrices(hub, wanted, viewerId) : regionPrices(hub, wanted);
+  return HUBS[hub].structure ? structurePrices(hub, wanted, viewerId, signal) : regionPrices(hub, wanted, signal);
 }
 
 async function cachedRows(locationId: number, typeIds: number[]) {
@@ -81,7 +83,7 @@ async function cachedRows(locationId: number, typeIds: number[]) {
     .where(and(eq(marketPrices.locationId, locationId), inArray(marketPrices.typeId, typeIds)));
 }
 
-async function regionPrices(hub: Hub, typeIds: number[]): Promise<HubPrices> {
+async function regionPrices(hub: Hub, typeIds: number[], signal: AbortSignal): Promise<HubPrices> {
   const { locationId, regionId } = HUBS[hub];
   const known = new Map((await cachedRows(locationId, typeIds)).map((row) => [row.typeId, row]));
   const cutoff = Date.now() - PRICE_MAX_AGE_MS;
@@ -89,9 +91,9 @@ async function regionPrices(hub: Hub, typeIds: number[]): Promise<HubPrices> {
 
   let failures = 0;
   const fetched = await inBatches(stale, FETCH_CONCURRENCY, async (typeId) => {
-    if (failures >= MAX_FAILURES) return null;
+    if (failures >= MAX_FAILURES || signal.aborted) return null;
     try {
-      const orders = await esiPages<EsiOrder>(`/markets/${regionId}/orders?order_type=all&type_id=${typeId}`);
+      const orders = await esiPages<EsiOrder>(`/markets/${regionId}/orders?order_type=all&type_id=${typeId}`, { signal });
       // Only orders in the hub station itself: region-wide buy orders elsewhere rarely pay better.
       return { locationId, typeId, ...(booksFrom(orders, locationId).get(typeId) ?? EMPTY), fetchedAt: new Date() };
     } catch (error) {
@@ -132,13 +134,13 @@ async function regionPrices(hub: Hub, typeIds: number[]): Promise<HubPrices> {
   };
 }
 
-async function structurePrices(hub: Hub, typeIds: number[], viewerId: string): Promise<HubPrices> {
+async function structurePrices(hub: Hub, typeIds: number[], viewerId: string, signal: AbortSignal): Promise<HubPrices> {
   const { locationId, label } = HUBS[hub];
   const snapshot = async () => (await db.select().from(marketSnapshots).where(eq(marketSnapshots.locationId, locationId)))[0];
   let current = await snapshot();
   let outcome: ReadOutcome | null = null;
   if (!current?.fetchedAt || current.fetchedAt.getTime() < Date.now() - PRICE_MAX_AGE_MS) {
-    outcome = await readStructureMarket(hub, viewerId);
+    outcome = await readStructureMarket(hub, viewerId, signal);
     current = await snapshot();
   }
 
@@ -185,7 +187,8 @@ function readError(error: unknown, reader: Reader, label: string): string {
  * Reads a structure's whole market and replaces its cached prices. Concurrent requests read it once:
  * the first takes a short lease on the snapshot row, the others keep using the prices already there.
  */
-export async function readStructureMarket(hub: Hub, viewerId: string): Promise<ReadOutcome> {
+export async function readStructureMarket(hub: Hub, viewerId: string, parentSignal?: AbortSignal): Promise<ReadOutcome> {
+  const signal = deadlineSignal(OPERATION_TIMEOUT_MS, parentSignal);
   const { locationId, label } = HUBS[hub];
   const now = new Date();
   await db.insert(marketSnapshots).values({ locationId, attemptedAt: new Date(0) }).onConflictDoNothing();
@@ -200,9 +203,11 @@ export async function readStructureMarket(hub: Hub, viewerId: string): Promise<R
   let error = "no character allows market reading; one that can dock there must allow it on the Characters page";
   for (const reader of readers) {
     try {
-      const token = await characterAccessToken(reader.userId, reader.id, "markets");
-      const orders = await esiPages<EsiOrder>(`/markets/structures/${locationId}`, { token, maxPages: STRUCTURE_MAX_PAGES });
+      signal.throwIfAborted();
+      const token = await characterAccessToken(reader.userId, reader.id, "markets", signal);
+      const orders = await esiPages<EsiOrder>(`/markets/structures/${locationId}`, { token, maxPages: STRUCTURE_MAX_PAGES, signal });
       const rows = [...booksFrom(orders, locationId)].map(([typeId, book]) => ({ locationId, typeId, ...book, fetchedAt: now }));
+      signal.throwIfAborted();
       await db.transaction(async (tx) => {
         await tx.delete(marketPrices).where(eq(marketPrices.locationId, locationId));
         for (let i = 0; i < rows.length; i += 1000) await tx.insert(marketPrices).values(rows.slice(i, i + 1000));

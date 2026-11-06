@@ -1,10 +1,10 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { characters } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { hasFeature, refreshAccessToken, SsoError, verifyAccessToken, type Feature } from "@/lib/eve/sso";
-import { detachCharacter } from "./accounts";
+import { detachCharacter, lockOwnedCharacter } from "./accounts";
 
 const REFRESH_LEEWAY_MS = 60_000;
 
@@ -22,14 +22,11 @@ export class ConsentMissingError extends Error {
  * expiry. The row lock is held across the refresh on purpose: refresh tokens rotate, so two
  * requests must never spend the same one - the loser waits, then finds the fresh token.
  */
-export async function characterAccessToken(userId: string, characterId: number, feature: Feature): Promise<string> {
+export async function characterAccessToken(userId: string, characterId: number, feature: Feature, signal?: AbortSignal): Promise<string> {
   // Failures that change the row are returned, not thrown: a throw would roll back the change.
   const result = await db.transaction(async (tx): Promise<{ token: string } | { error: Error }> => {
-    const [character] = await tx
-      .select()
-      .from(characters)
-      .where(and(eq(characters.id, characterId), eq(characters.userId, userId)))
-      .for("update");
+    const character = await lockOwnedCharacter(tx, userId, characterId);
+    signal?.throwIfAborted();
     if (!character) throw new Error("that character is not linked to your profile");
     if (!character.refreshTokenEnc || !hasFeature(character.scopes, feature)) {
       throw new ConsentMissingError(characterId, feature);
@@ -44,7 +41,7 @@ export async function characterAccessToken(userId: string, characterId: number, 
 
     let tokens;
     try {
-      tokens = await refreshAccessToken(decrypt(character.refreshTokenEnc));
+      tokens = await refreshAccessToken(decrypt(character.refreshTokenEnc), signal);
     } catch (error) {
       if (error instanceof SsoError && error.invalidGrant) {
         await tx

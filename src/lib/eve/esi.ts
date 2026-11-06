@@ -1,5 +1,6 @@
 import "server-only";
 import { env } from "@/lib/env";
+import { deadlineSignal, OPERATION_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "./deadline";
 
 const BASE = "https://esi.evetech.net";
 // Pinned response-shape version (GET /meta/compatibility-dates); same pin as eve-skills.
@@ -14,7 +15,7 @@ export class EsiError extends Error {
   }
 }
 
-type EsiInit = { method?: "GET" | "POST" | "DELETE"; body?: unknown; token?: string };
+type EsiInit = { method?: "GET" | "POST" | "DELETE"; body?: unknown; token?: string; signal?: AbortSignal };
 
 async function request(path: string, init: EsiInit): Promise<Response> {
   const headers: Record<string, string> = {
@@ -25,11 +26,12 @@ async function request(path: string, init: EsiInit): Promise<Response> {
   if (init.token) headers.Authorization = `Bearer ${init.token}`;
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
   const response = await fetch(BASE + path, {
+    signal: deadlineSignal(REQUEST_TIMEOUT_MS, init.signal),
     method: init.method ?? "GET",
     headers,
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
     cache: "no-store",
-  });
+  }).catch(rethrowRequestError);
   if (!response.ok) {
     const detail = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new EsiError(`ESI ${init.method ?? "GET"} ${path} failed (${response.status}): ${detail?.error ?? response.statusText}`, response.status);
@@ -40,7 +42,14 @@ async function request(path: string, init: EsiInit): Promise<Response> {
 export async function esi<T>(path: string, init: EsiInit = {}): Promise<T> {
   const response = await request(path, init);
   if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  return (await response.json().catch(rethrowRequestError)) as T;
+}
+
+function rethrowRequestError(error: unknown): never {
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
+    throw new EsiError("EVE did not respond within the request's time budget. Try again shortly.", 504);
+  }
+  throw error;
 }
 
 // Wallet journals of busy traders can run to dozens of pages; a caller that needs more says so.
@@ -52,18 +61,28 @@ const PAGE_CONCURRENCY = 8;
  * Every page of a paged GET (`?page=`, total in `X-Pages`), concatenated in page order. The first page
  * says how many there are; the rest are fetched in parallel.
  */
-export async function esiPages<T>(path: string, init: { token?: string; maxPages?: number } = {}): Promise<T[]> {
+export async function esiPages<T>(path: string, init: { token?: string; maxPages?: number; signal?: AbortSignal } = {}): Promise<T[]> {
+  const signal = deadlineSignal(OPERATION_TIMEOUT_MS, init.signal);
+  const maxPages = init.maxPages ?? MAX_PAGES;
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1) throw new Error("Invalid ESI page limit");
   const separator = path.includes("?") ? "&" : "?";
   const page = async (n: number) => {
-    const response = await request(`${path}${separator}page=${n}`, { token: init.token });
-    return { pages: Number(response.headers.get("X-Pages") ?? 1) || 1, rows: (await response.json()) as T[] };
+    if (signal.aborted) rethrowRequestError(signal.reason);
+    const response = await request(`${path}${separator}page=${n}`, { token: init.token, signal });
+    const pages = Number(response.headers.get("X-Pages") ?? 1);
+    if (!Number.isSafeInteger(pages) || pages < 1 || pages > maxPages) {
+      throw new EsiError(`ESI returned an incomplete result: ${pages} pages exceeds or violates the ${maxPages}-page limit.`, 502);
+    }
+    return { pages, rows: (await response.json().catch(rethrowRequestError)) as T[] };
   };
   const first = await page(1);
-  const last = Math.min(first.pages, init.maxPages ?? MAX_PAGES);
+  const last = first.pages;
   const out = [first.rows];
   for (let start = 2; start <= last; start += PAGE_CONCURRENCY) {
     const batch = Array.from({ length: Math.min(PAGE_CONCURRENCY, last - start + 1) }, (_, i) => page(start + i));
-    out.push(...(await Promise.all(batch)).map((p) => p.rows));
+    const pages = await Promise.all(batch);
+    if (pages.some((p) => p.pages !== last)) throw new EsiError("ESI pagination changed during the read; try again.", 502);
+    out.push(...pages.map((p) => p.rows));
   }
   return out.flat();
 }

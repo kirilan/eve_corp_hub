@@ -38,11 +38,16 @@ export const SLOT_ORDER: SlotKind[] = ["lo", "med", "hi", "rig", "subsystem", "s
 
 export class EftError extends Error {}
 
+export const MAX_EFT_CHARS = 50_000;
+export const MAX_EFT_LINES = 500;
+
 export type EftLine = { name: string; quantity: number; counted: boolean; charge: string | null; line: number };
 export type ParsedEft = { shipName: string; fitName: string; lines: EftLine[] };
 
 export function parseEft(text: string): ParsedEft {
+  if (text.length > MAX_EFT_CHARS) throw new EftError(`Keep fits under ${MAX_EFT_CHARS} characters.`);
   const rows = text.replace(/\r\n?/g, "\n").split("\n");
+  if (rows.filter((row) => row.trim()).length > MAX_EFT_LINES) throw new EftError(`Paste at most ${MAX_EFT_LINES} lines per fit.`);
   const headerIndex = rows.findIndex((row) => row.trim() !== "");
   const header = /^\[([^,\]]+),\s*(.*)\]$/.exec(rows[headerIndex]?.trim() ?? "");
   if (!header) throw new EftError('The first line must look like "[Ship type, Fit name]".');

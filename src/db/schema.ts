@@ -223,7 +223,7 @@ export const eveTypes = pgTable("eve_types", {
   // hi / med / lo / rig / subsystem / service, from the type's dogma effects; null for anything not fitted to a slot.
   slot: text("slot"),
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [index("eve_types_lower_name_idx").on(sql`lower(${t.name})`)]);
 
 // ISK amounts: two decimals, and a wallet can hold more than a double stores exactly.
 const isk = (name: string) => numeric(name, { precision: 20, scale: 2, mode: "number" });
@@ -269,6 +269,9 @@ export const walletSyncs = pgTable("wallet_syncs", {
   historyFrom: timestamp("history_from", { withTimezone: true }),
   syncedAt: timestamp("synced_at", { withTimezone: true }),
   attemptedAt: timestamp("attempted_at", { withTimezone: true }).notNull().defaultNow(),
+  // A unique claim fences off expired workers and results from an earlier character ownership.
+  leaseId: uuid("lease_id"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
   // Last failure, cleared by the next success; stored data stays visible meanwhile.
   error: text("error"),
 });

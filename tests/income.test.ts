@@ -166,8 +166,9 @@ describe("sync and report", () => {
     const userId = await profile(1);
     esiPages.mockResolvedValue(journal([{ id: 1 }, { id: 2, ref_type: "ess_escrow_transfer" }, { id: 3, ref_type: "player_donation" }]));
     await syncCharacterIncome(userId, 1);
+    await db.update(walletSyncs).set({ attemptedAt: new Date(0) });
     await syncCharacterIncome(userId, 1);
-    expect(esiPages).toHaveBeenCalledWith("/characters/1/wallet/journal", { token: "token" });
+    expect(esiPages).toHaveBeenCalledWith("/characters/1/wallet/journal", { token: "token", signal: expect.any(AbortSignal) });
     expect(await db.$count(walletEntries)).toBe(2);
     const [state] = await db.select().from(walletSyncs);
     expect(state).toMatchObject({ characterId: 1, error: null });
@@ -178,8 +179,10 @@ describe("sync and report", () => {
     const userId = await profile(1);
     esiPages.mockResolvedValueOnce(journal([{ id: 1 }]));
     await syncCharacterIncome(userId, 1);
+    await db.update(walletSyncs).set({ attemptedAt: new Date(0) });
     esiPages.mockRejectedValueOnce(new EsiError("ESI down", 503));
     await syncCharacterIncome(userId, 1);
+    await db.update(walletSyncs).set({ attemptedAt: new Date(0) });
     characterAccessToken.mockRejectedValueOnce(new ConsentMissingError(1, "wallet"));
     await syncCharacterIncome(userId, 1);
     const [state] = await db.select().from(walletSyncs);

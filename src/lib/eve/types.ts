@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { eveTypes } from "@/db/schema";
 import type { SlotKind, TypeInfo } from "@/lib/fittings/eft";
 import { esi } from "./esi";
+import { deadlineSignal, OPERATION_TIMEOUT_MS } from "./deadline";
 
 // Dogma effects that put a module in a slot (checked against ESI /dogma/effects, 2026-10-15).
 const SLOT_EFFECTS: Record<number, SlotKind> = {
@@ -20,10 +21,10 @@ type EsiGroup = { group_id: number; category_id: number };
 
 const groupCategory = new Map<number, number>();
 
-async function categoryOf(groupId: number): Promise<number> {
+async function categoryOf(groupId: number, signal: AbortSignal): Promise<number> {
   let category = groupCategory.get(groupId);
   if (category === undefined) {
-    category = (await esi<EsiGroup>(`/universe/groups/${groupId}`)).category_id;
+    category = (await esi<EsiGroup>(`/universe/groups/${groupId}`, { signal })).category_id;
     groupCategory.set(groupId, category);
   }
   return category;
@@ -40,7 +41,8 @@ function toInfo(row: typeof eveTypes.$inferSelect): TypeInfo {
 }
 
 /** Type details by id: from the local table, fetching (and keeping) any it has not seen yet. */
-export async function typesById(ids: number[]): Promise<Map<number, TypeInfo>> {
+export async function typesById(ids: number[], parentSignal?: AbortSignal): Promise<Map<number, TypeInfo>> {
+  const signal = deadlineSignal(OPERATION_TIMEOUT_MS, parentSignal);
   const wanted = [...new Set(ids)];
   if (wanted.length === 0) return new Map();
   const known = await db.select().from(eveTypes).where(inArray(eveTypes.id, wanted));
@@ -48,9 +50,9 @@ export async function typesById(ids: number[]): Promise<Map<number, TypeInfo>> {
   const missing = wanted.filter((id) => !out.has(id));
   if (missing.length > 0) {
     const fetched = await inBatches(missing, 10, async (id) => {
-      const type = await esi<EsiType>(`/universe/types/${id}`);
+      const type = await esi<EsiType>(`/universe/types/${id}`, { signal });
       const slot = type.dogma_effects?.map((effect) => SLOT_EFFECTS[effect.effect_id]).find(Boolean) ?? null;
-      return { id, name: type.name, groupId: type.group_id, categoryId: await categoryOf(type.group_id), slot };
+      return { id, name: type.name, groupId: type.group_id, categoryId: await categoryOf(type.group_id, signal), slot };
     });
     await db.insert(eveTypes).values(fetched).onConflictDoNothing();
     for (const type of fetched) out.set(type.id, type);
@@ -59,7 +61,8 @@ export async function typesById(ids: number[]): Promise<Map<number, TypeInfo>> {
 }
 
 /** Type details keyed by lower-cased name; names ESI does not know are simply absent. */
-export async function typesByName(names: string[]): Promise<Map<string, TypeInfo>> {
+export async function typesByName(names: string[], parentSignal?: AbortSignal): Promise<Map<string, TypeInfo>> {
+  const signal = deadlineSignal(OPERATION_TIMEOUT_MS, parentSignal);
   const wanted = [...new Set(names.map((name) => name.toLowerCase()))];
   if (wanted.length === 0) return new Map();
   const known = await db
@@ -72,12 +75,13 @@ export async function typesByName(names: string[]): Promise<Map<string, TypeInfo
     const { inventory_types = [] } = await esi<{ inventory_types?: { id: number; name: string }[] }>("/universe/ids", {
       method: "POST",
       body: missing.slice(i, i + 500),
+      signal,
     });
-    for (const type of (await typesById(inventory_types.map((t) => t.id))).values()) out.set(type.name.toLowerCase(), type);
+    for (const type of (await typesById(inventory_types.map((t) => t.id), signal)).values()) out.set(type.name.toLowerCase(), type);
   }
   return out;
 }
 
-export async function typeNames(ids: number[]): Promise<Map<number, string>> {
-  return new Map([...(await typesById(ids))].map(([id, type]) => [id, type.name]));
+export async function typeNames(ids: number[], signal?: AbortSignal): Promise<Map<number, string>> {
+  return new Map([...(await typesById(ids, signal))].map(([id, type]) => [id, type.name]));
 }

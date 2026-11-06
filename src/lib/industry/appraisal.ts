@@ -1,4 +1,5 @@
 import "server-only";
+import { deadlineSignal, OPERATION_TIMEOUT_MS } from "@/lib/eve/deadline";
 import { typeNames, typesByName } from "@/lib/eve/types";
 import { type Hub } from "./hubs";
 import { hubPrices } from "./market";
@@ -10,6 +11,8 @@ export class AppraisalError extends Error {}
 
 export const MAX_INPUT_CHARS = 100_000;
 export const MAX_ITEM_TYPES = 500;
+export const MAX_INPUT_LINES = 500;
+export const MAX_CANDIDATE_NAMES = 1500;
 const MAX_UNKNOWN_SHOWN = 50;
 
 /**
@@ -22,7 +25,11 @@ export async function appraiseItems(viewerId: string, text: string, hub: Hub): P
   const lines = parseItemList(text);
   if (lines.length === 0) throw new AppraisalError("Paste at least one item.");
 
-  const types = await typesByName(lines.flatMap((line) => line.readings.map((reading) => reading.name)));
+  if (lines.length > MAX_INPUT_LINES) throw new AppraisalError(`Paste at most ${MAX_INPUT_LINES} item lines at a time.`);
+  const candidates = [...new Set(lines.flatMap((line) => line.readings.map((reading) => reading.name.toLowerCase())))];
+  if (candidates.length > MAX_CANDIDATE_NAMES) throw new AppraisalError("Too many possible item names; split the list into smaller batches.");
+  const signal = deadlineSignal(OPERATION_TIMEOUT_MS);
+  const types = await typesByName(candidates, signal);
   const quantities = new Map<number, number>();
   const unknown: string[] = [];
   for (const line of lines) {
@@ -47,8 +54,8 @@ export async function appraiseItems(viewerId: string, text: string, hub: Hub): P
 
   const materialIds = [...new Set(items.flatMap((item) => item.reprocess?.materials.map(([typeId]) => typeId) ?? []))];
   const oreSkills = [...new Set(items.map((item) => item.reprocess?.oreSkill).filter((skill) => skill != null))];
-  const materialNames = await typeNames(materialIds);
-  const prices = await hubPrices(hub, [...quantities.keys(), ...materialIds], viewerId);
+  const materialNames = await typeNames(materialIds, signal);
+  const prices = await hubPrices(hub, [...quantities.keys(), ...materialIds], viewerId, signal);
 
   return {
     hub,

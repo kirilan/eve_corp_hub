@@ -1,15 +1,15 @@
 import { redirect, unstable_rethrow } from "next/navigation";
 import type { NextRequest } from "next/server";
 import { completeSignIn, LinkConflictError } from "@/lib/auth/accounts";
-import { currentUserId, startSession, takeSsoFlow } from "@/lib/auth/session";
+import { currentUserId, safeReturnTo, startSession, takeSsoFlow } from "@/lib/auth/session";
 import { affiliations } from "@/lib/eve/esi";
 import { exchangeCode, scopesFor, verifyAccessToken } from "@/lib/eve/sso";
 
 function back(path: string, notice: string, extra: Record<string, string> = {}): never {
-  const url = new URL(path, "http://local");
+  const url = new URL(safeReturnTo(path), "http://local");
   url.searchParams.set("notice", notice);
   for (const [key, value] of Object.entries(extra)) url.searchParams.set(key, value);
-  redirect(url.pathname + url.search);
+  redirect(safeReturnTo(url.pathname + url.search + url.hash));
 }
 
 export async function GET(request: NextRequest) {

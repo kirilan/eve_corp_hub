@@ -1,10 +1,10 @@
 import Image from "next/image";
 import Link from "next/link";
 import { typeIconUrl } from "@/lib/eve/images";
-import type { FitRow } from "@/lib/fittings/store";
+import type { FitSummary } from "@/lib/fittings/store";
 import { VisibilityBadge } from "./visibility-badge";
 
-export function FitList({ fits, showOwner = false, empty }: { fits: FitRow[]; showOwner?: boolean; empty: React.ReactNode }) {
+export function FitList({ fits, showOwner = false, empty }: { fits: FitSummary[]; showOwner?: boolean; empty: React.ReactNode }) {
   if (fits.length === 0) return <div className="rounded border border-dashed border-border p-6 text-sm text-muted">{empty}</div>;
   return (
     <ul className="divide-y divide-border rounded border border-border bg-surface">

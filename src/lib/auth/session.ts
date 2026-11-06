@@ -80,5 +80,14 @@ export async function takeSsoFlow(): Promise<SsoFlow | null> {
 
 /** Only same-site paths: an open redirect after login would be a phishing gift. */
 export function safeReturnTo(value: string | null | undefined, fallback = "/"): string {
-  return value && value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\") ? value : fallback;
+  if (!value?.startsWith("/") || value.includes("\\") || [...value].some((c) => c.charCodeAt(0) <= 32)) return fallback;
+  const base = "https://return.invalid";
+  try {
+    const url = new URL(value, base);
+    // Check after dot-segment normalization too: /a/..//host becomes //host.
+    if (url.origin !== base || url.pathname.startsWith("//")) return fallback;
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return fallback;
+  }
 }

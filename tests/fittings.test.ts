@@ -1,6 +1,9 @@
 import { sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/db";
+import { fittings } from "@/db/schema";
+import { typesByName } from "@/lib/eve/types";
+import { MAX_EFT_CHARS, MAX_EFT_LINES } from "@/lib/fittings/eft";
 import { completeSignIn, loadViewer, setMainCharacter, type Viewer } from "@/lib/auth/accounts";
 import {
   copyFitting,
@@ -17,6 +20,8 @@ import {
   setVisibility,
   updateFitting,
   viewableFitting,
+  viewableFittings,
+  FIT_PAGE_SIZE,
 } from "@/lib/fittings/store";
 import { EsiError } from "@/lib/eve/esi";
 import { BY_ID, BY_NAME, RIFTER_EFT } from "./fixtures/types";
@@ -123,7 +128,7 @@ describe("ownership", () => {
     await expect(setVisibility(corpmate, id, "private")).rejects.toBeInstanceOf(FittingError);
     await expect(deleteFitting(corpmate, id)).rejects.toBeInstanceOf(FittingError);
     await deleteFitting(owner, id);
-    expect(await listOwnFittings(owner)).toEqual([]);
+    expect((await listOwnFittings(owner)).fits).toEqual([]);
   });
 
   it("copies a visible fit as a private fit of the copier", async () => {
@@ -157,7 +162,8 @@ describe("in-game fittings", () => {
     const [listed] = await gameFittings(owner, 1);
     expect(listed).toMatchObject({ shipName: "Rifter", alreadySaved: false });
     // "Invalid" entries are dropped on import, so the stored fit differs from the raw game one...
-    const [stored] = await listOwnFittings(owner);
+    const [listedFit] = (await listOwnFittings(owner)).fits;
+    const stored = (await viewableFitting(owner, listedFit.id))!;
     expect(stored.items).toEqual([{ type_id: 2048, flag: "LoSlot3", quantity: 1 }]);
     // ...and a clean game fit with the same contents counts as already saved.
     esi.mockResolvedValue([{ ...gameFit, items: [{ type_id: 2048, flag: "LoSlot0", quantity: 1 }] }]);
@@ -214,5 +220,45 @@ describe("bulk send", () => {
     esi.mockResolvedValue([]);
     expect(await sendManyToGame(outsider, [hidden.id], 3)).toEqual([]);
     expect(esi.mock.calls.every(([, init]) => !init?.method)).toBe(true);
+  });
+});
+
+describe("bounded fitting reads and input", () => {
+  it("rejects oversized fits and unauthorized edits before resolving types", async () => {
+    const fit = await createFitting(owner, { eft: RIFTER_EFT, visibility: "public" });
+    vi.mocked(typesByName).mockClear();
+    await expect(updateFitting(outsider, fit.id, { eft: RIFTER_EFT })).rejects.toThrow("Fit not found");
+    await expect(createFitting(owner, { eft: "a".repeat(MAX_EFT_CHARS + 1) })).rejects.toThrow(/characters/);
+    await expect(createFitting(owner, { eft: "[Rifter, Test]\n" + "Damage Control II\n".repeat(MAX_EFT_LINES) })).rejects.toThrow(/lines/);
+    expect(typesByName).not.toHaveBeenCalled();
+  });
+
+  it("batch reads preserve order and enforce all visibility rules", async () => {
+    const privateFit = await createFitting(owner, { eft: RIFTER_EFT });
+    const linked = await createFitting(owner, { eft: RIFTER_EFT, visibility: "link" });
+    const corp = await createFitting(owner, { eft: RIFTER_EFT, visibility: "corporation" });
+    const publicFit = await createFitting(owner, { eft: RIFTER_EFT, visibility: "public" });
+    const ids = [publicFit.id, privateFit.id, linked.id, corp.id, publicFit.id, "invalid"];
+    expect((await viewableFittings(corpmate, ids)).map((f) => f.id)).toEqual([publicFit.id, corp.id]);
+    expect((await viewableFittings(outsider, ids)).map((f) => f.id)).toEqual([publicFit.id]);
+    expect((await viewableFittings(null, ids)).map((f) => f.id)).toEqual([publicFit.id]);
+  });
+
+  it("paginates deterministically, searches all pages, and omits full payloads", async () => {
+    await db.insert(fittings).values(Array.from({ length: FIT_PAGE_SIZE + 1 }, (_, i) => ({
+      ownerId: owner.userId, name: `Fit ${String(i).padStart(3, "0")}`, shipTypeId: 587, items: [],
+    })));
+    const first = await listOwnFittings(owner);
+    const second = await listOwnFittings(owner, undefined, 2);
+    expect(first.fits).toHaveLength(FIT_PAGE_SIZE);
+    expect(first.hasMore).toBe(true);
+    expect(second.fits).toHaveLength(1);
+    expect(second.hasMore).toBe(false);
+    expect(new Set([...first.fits, ...second.fits].map((f) => f.id)).size).toBe(FIT_PAGE_SIZE + 1);
+    expect(first.fits[0]).not.toHaveProperty("items");
+    expect(first.fits[0]).not.toHaveProperty("shareToken");
+    expect((await listOwnFittings(owner, `Fit ${String(FIT_PAGE_SIZE).padStart(3, "0")}`)).fits).toEqual(second.fits);
+    expect((await listOwnFittings(outsider)).fits).toEqual([]);
+    expect((await listOwnFittings(owner, undefined, NaN)).page).toBe(1);
   });
 });

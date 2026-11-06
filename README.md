@@ -121,6 +121,9 @@ profile can see follows its **main character's corporation**.
   turns any visible fit into a private one of your own.
 - Names (50 chars) and descriptions (500) are capped at EVE's limits, so every stored fit can be
   sent to the game.
+- Pasted EFT is limited to 50,000 characters and 500 nonblank lines before type lookups.
+  My fittings shows 50 fits per page; searches cover the whole collection, and selection applies
+  to the current page.
 - Type names and slots come from ESI on first sight and are cached in `eve_types`.
 
 ## Personal income
@@ -151,6 +154,10 @@ tracker; `/ratting` redirects here.)
 - **Syncing**: opening the page syncs characters not synced within the hour (ESI caches the
   journal for an hour). A daily Vercel Cron (`/api/cron/income`, see `vercel.json`) syncs every
   tracking character, so nobody's history has a gap however rarely they look.
+  Each sync claims a one-minute database lease; concurrent requests share the stored result.
+  Ownership, consent and the claim are checked again before writing. Unlinking, transfer,
+  revocation and deleting history invalidate pending results. Page loads sync at most four
+  characters at once.
 - **Slices**: range (7/30/90 days, 1 year, all), grouping (day/week/month, UTC), sources (any
   combination, or *Ratting* for bounties and ESS), characters, and stacking by character or
   source. Below the chart: total, per active day, best day, corporation tax; a per-character table
@@ -171,6 +178,8 @@ total also says what reprocessing only those items would bring. Signed-in users 
   `Warrior II x5`, `5x Warrior II`, `Tritanium 1000` or `1000 Tritanium`, and EFT fits. A line can be
   read more than one way, so the first reading whose name EVE knows wins (`src/lib/industry/parse.ts`).
   Repeated items are added together; lines naming nothing are listed as not recognised.
+  Lists are limited to 100,000 characters, 500 item lines and 1,500 candidate names before
+  external lookups.
 - **Reprocessing data**: materials, portion sizes and each ore's processing skill come from CCP's
   static data export, shipped as `src/lib/industry/type-materials.json`. ESI has no reprocessing data.
   Regenerate the file after a patch with `pnpm sde:materials <folder>` (see the script for where to
@@ -318,6 +327,11 @@ Checks: `pnpm test` (Vitest against a throwaway in-memory PGlite), `pnpm typeche
 
 Schema changes: edit `src/db/schema.ts`, then `pnpm db:generate --name <what-changed>` and commit
 the generated SQL.
+
+External requests have a 10-second deadline. Paginated reads, appraisals, bulk fitting sends and
+wallet syncs also have a 45-second operation budget; cron passes its remaining budget through to
+in-flight requests. ESI results that exceed the page limit or change page count during a read are
+rejected as incomplete, keeping previous wallet history and market snapshots intact.
 
 ## Deployment (Vercel + Neon)
 
