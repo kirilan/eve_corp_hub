@@ -21,13 +21,16 @@ import {
   STRUCTURES,
   type StructureKind,
 } from "@/lib/industry/rates";
+import { type ColumnKey, formatDays, type SaleTime, saleTime, type TimeSummary, timeSummaries } from "@/lib/industry/pace";
 import {
   type Appraisal,
   appraise as work,
   type Basis,
   type ItemRow,
+  keptShare,
   type OptionKey,
   OPTIONS,
+  type Pricing,
   type Result,
   type Yields,
 } from "@/lib/industry/reprocess";
@@ -412,7 +415,7 @@ function SettingsPanel({
             onChange={(brokerFee) => setSettings({ brokerFee })}
             hint={
               info.structure
-                ? "Only when listing. The owner's rate plus a 0.5% SCC surcharge, 1% at the least; skills do not lower it. The order window shows it."
+                ? `Only when listing. Set by the structure's owner (${pct(info.brokerFee)} here when last checked); skills do not lower it. The order window shows yours.`
                 : `Only when listing: 3%, less 0.3% per level of Broker Relations and a little per point of standing with ${info.faction.name} and ${info.owner.name}.`
             }
           />
@@ -432,15 +435,13 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
     }),
     [appraisal.hub, settings, skills],
   );
-  const result = useMemo(
-    () =>
-      work(
-        appraisal,
-        { basis, reprocessingTax: fromPercent(settings.reprocessingTax), salesTax: fromPercent(settings.salesTax), brokerFee: fromPercent(settings.brokerFee) },
-        yields,
-      ),
-    [appraisal, basis, settings, yields],
+  const pricing = useMemo<Pricing>(
+    () => ({ basis, reprocessingTax: fromPercent(settings.reprocessingTax), salesTax: fromPercent(settings.salesTax), brokerFee: fromPercent(settings.brokerFee) }),
+    [basis, settings],
   );
+  const result = useMemo(() => work(appraisal, pricing, yields), [appraisal, pricing, yields]);
+  const times = useMemo(() => timeSummaries(appraisal, result, basis, keptShare(pricing)), [appraisal, result, basis, pricing]);
+  const timeOf = (typeId: number, quantity: number) => saleTime(appraisal.books[typeId], appraisal.pace[typeId], quantity, basis);
   const oreSkills = Object.keys(appraisal.oreSkillNames).map(Number);
   const hint = (key: OptionKey) => {
     const ores = oreSkills.map((skill) => yields[key].ore(skill));
@@ -485,9 +486,9 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
         ))}
       </div>
 
-      <OptionCards result={result} priced={appraisal.pricesAvailable} hint={hint} />
-      <ItemTable rows={result.items} oreSkillNames={appraisal.oreSkillNames} />
-      <MaterialTable result={result} />
+      <OptionCards result={result} priced={appraisal.pricesAvailable} hint={hint} times={times} basis={basis} />
+      <ItemTable rows={result.items} oreSkillNames={appraisal.oreSkillNames} basis={basis} timeOf={timeOf} />
+      <MaterialTable result={result} timeOf={timeOf} />
 
       {appraisal.unknown.length > 0 && (
         <details className="rounded border border-border bg-surface p-4 text-sm">
@@ -510,6 +511,13 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
         </li>
         <li>Ore and ice reprocess on Reprocessing, Reprocessing Efficiency, their own processing skill and an implant, not Scrapmetal Processing.</li>
         <li>Items reprocess in whole portions (ammunition in 100s, for instance); units short of a portion are counted as sold as they are.</li>
+        <li>
+          Time to sell goes by the last 30 days of trades in {hub.regionName}, from EVE&apos;s daily market history (kept per region, not per
+          station). The share of them that filled sell orders is read from where the week&apos;s average price sits between the top buy and
+          the lowest sell order. <em>List</em> assumes your order sits at the lowest price and stays there: undercutting slows it down.{" "}
+          <em>Sell now</em> sells what the buy orders hold at once; the rest waits for new buy orders at the pace buyers have been using them.
+          It is an estimate from the past month, not a promise.
+        </li>
       </ul>
     </section>
   );
@@ -518,7 +526,19 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
 type Column = { key: "asIs" | OptionKey; label: string };
 const COLUMNS: Column[] = [{ key: "asIs", label: "Sell as they are" }, ...OPTIONS.map((option) => ({ key: option.key, label: option.label }))];
 
-function OptionCards({ result, priced, hint }: { result: Result; priced: boolean; hint: (key: OptionKey) => string }) {
+function OptionCards({
+  result,
+  priced,
+  hint,
+  times,
+  basis,
+}: {
+  result: Result;
+  priced: boolean;
+  hint: (key: OptionKey) => string;
+  times: Record<ColumnKey, TimeSummary>;
+  basis: Basis;
+}) {
   const { totals } = result;
   const value = (key: Column["key"]) => (key === "asIs" ? totals.asIs : totals.options[key]);
   const fees = (key: Column["key"]) => (key === "asIs" ? totals.fees.asIs : totals.fees.options[key]);
@@ -552,6 +572,7 @@ function OptionCards({ result, priced, hint }: { result: Result; priced: boolean
                 After <Isk value={fees(column.key)} /> of sales tax and fees
               </p>
             )}
+            {priced && <TimeNote time={times[column.key]} basis={basis} total={total} />}
             {priced && column.key !== "asIs" && (
               <>
                 <p className={`text-sm ${delta >= 0 ? "text-emerald-400" : "text-red-300"}`}>
@@ -577,19 +598,72 @@ function OptionCards({ result, priced, hint }: { result: Result; priced: boolean
   );
 }
 
-function Flags({ row, oreSkillNames }: { row: ItemRow; oreSkillNames: Record<number, string> }) {
+/** How long a column takes to sell, under its total. */
+function TimeNote({ time, basis, total }: { time: TimeSummary; basis: Basis; total: number }) {
+  if (time.value === 0) return null;
+  const last = time.slowest && time.all !== time.most ? ` (${time.slowest} last)` : "";
+  const noTrades =
+    time.noTrades.length > 0 &&
+    `${time.noTrades.length === 1 ? time.noTrades[0] : `${time.noTrades.length} items`} had no trades in the last 30 days.`;
+  let line: string;
+  if (basis === "sell") {
+    line =
+      time.most === null
+        ? "No estimate of the time to sell."
+        : time.all === time.most
+          ? `Sells in ${formatDays(time.all)}.`
+          : time.all === null
+            ? `90% of the value sells in ${formatDays(time.most)}; the rest has no recent trades to go by.`
+            : `90% of the value sells in ${formatDays(time.most)}, all of it in ${formatDays(time.all)}${last}.`;
+  } else if (time.nowShare >= 0.999) {
+    line = "The buy orders take it all at once.";
+  } else {
+    const rest = time.all === null ? "the rest has no recent buyers" : `buyers would take the rest in ${formatDays(time.all)}`;
+    line = `The buy orders take ${pct(time.nowShare)} of it at once; ${rest}${last}.`;
+  }
+  // Worth a mention once walking down the book costs more than a rounding error.
+  const depth = basis === "buy" && time.depthCost > 0.01 * total;
+  return (
+    <div className="space-y-0.5 text-xs">
+      <p>
+        <span className="text-muted">Time: </span>
+        {line}
+      </p>
+      {depth && (
+        <p className="text-amber-300">
+          Selling down the buy orders fetches <Isk value={time.depthCost} /> less than all of it at the top price.
+        </p>
+      )}
+      {noTrades && <p className="text-muted">{noTrades}</p>}
+    </div>
+  );
+}
+
+function Flags({ row, oreSkillNames, basis, time }: { row: ItemRow; oreSkillNames: Record<number, string>; basis: Basis; time: SaleTime }) {
   const notes = [
     !row.reprocessable && "cannot be reprocessed",
     row.oreSkill !== null && (oreSkillNames[row.oreSkill] ?? "ore"),
     row.leftover > 0 && `${units(row.leftover)} short of a portion`,
     row.unpriced && "no price",
     row.partial && "the buy orders take only part of it",
+    basis === "buy" && time.depth >= 0.05 && `the stack walks the buy orders down ${pct(time.depth)} on average`,
   ].filter(Boolean);
   if (notes.length === 0) return null;
   return <span className="block text-xs text-muted">{notes.join(" · ")}</span>;
 }
 
-function ItemTable({ rows, oreSkillNames }: { rows: ItemRow[]; oreSkillNames: Record<number, string> }) {
+type TimeOf = (typeId: number, quantity: number) => SaleTime;
+
+/** A sale's time, with how much goes at once when that is only part of it. */
+function TimeCell({ time }: { time: SaleTime }) {
+  return (
+    <span className={time.days === null ? "text-muted" : ""}>
+      {time.now > 0 && time.days !== 0 ? `${units(time.now)} at once, rest ${formatDays(time.days)}` : formatDays(time.days)}
+    </span>
+  );
+}
+
+function ItemTable({ rows, oreSkillNames, basis, timeOf }: { rows: ItemRow[]; oreSkillNames: Record<number, string>; basis: Basis; timeOf: TimeOf }) {
   const most = (row: ItemRow) => Math.max(row.asIs, ...Object.values(row.options));
   const sorted = [...rows].sort((a, b) => most(b) - most(a));
   const cell = (row: ItemRow, key: Column["key"]) => {
@@ -611,31 +685,36 @@ function ItemTable({ rows, oreSkillNames }: { rows: ItemRow[]; oreSkillNames: Re
               </th>
             ))}
             <th scope="col" className="px-3 py-2 font-medium">Better</th>
+            <th scope="col" className="px-3 py-2 font-medium">Time to sell as they are</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
-          {sorted.map((row) => (
-            <tr key={row.typeId}>
-              <th scope="row" className="px-3 py-2 text-left font-normal">
-                {row.name}
-                <Flags row={row} oreSkillNames={oreSkillNames} />
-              </th>
-              <td className="px-3 py-2 text-right tabular-nums">{units(row.quantity)}</td>
-              {COLUMNS.map((column) => (
-                <td key={column.key} className="px-3 py-2 text-right">
-                  {cell(row, column.key)}
-                </td>
-              ))}
-              <td className="px-3 py-2">{most(row) === 0 ? "—" : row.best === "asIs" ? "Sell" : "Reprocess"}</td>
-            </tr>
-          ))}
+          {sorted.map((row) => {
+            const time = timeOf(row.typeId, row.quantity);
+            return (
+              <tr key={row.typeId}>
+                <th scope="row" className="px-3 py-2 text-left font-normal">
+                  {row.name}
+                  <Flags row={row} oreSkillNames={oreSkillNames} basis={basis} time={time} />
+                </th>
+                <td className="px-3 py-2 text-right tabular-nums">{units(row.quantity)}</td>
+                {COLUMNS.map((column) => (
+                  <td key={column.key} className="px-3 py-2 text-right">
+                    {cell(row, column.key)}
+                  </td>
+                ))}
+                <td className="px-3 py-2">{most(row) === 0 ? "—" : row.best === "asIs" ? "Sell" : "Reprocess"}</td>
+                <td className="px-3 py-2 text-xs">{row.unpriced ? "—" : <TimeCell time={time} />}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function MaterialTable({ result }: { result: Result }) {
+function MaterialTable({ result, timeOf }: { result: Result; timeOf: TimeOf }) {
   if (result.materials.length === 0) return null;
   const sorted = [...result.materials].sort((a, b) => b.value.skills - a.value.skills);
   return (
@@ -648,8 +727,8 @@ function MaterialTable({ result }: { result: Result }) {
             <tr>
               <th scope="col" className="px-3 py-2 font-medium">Material</th>
               {OPTIONS.map((option) => (
-                <th key={option.key} scope="col" colSpan={2} className="px-3 py-2 text-right font-medium">
-                  {option.key === "base" ? "No skills" : "With skills"}: units · ISK
+                <th key={option.key} scope="col" colSpan={3} className="px-3 py-2 text-right font-medium">
+                  {option.key === "base" ? "No skills" : "With skills"}: units · ISK · time to sell
                 </th>
               ))}
             </tr>
@@ -669,6 +748,7 @@ function MaterialTable({ result }: { result: Result }) {
                     <td className="px-3 py-2 text-right">
                       <Isk value={row.value[option.key]} />
                     </td>
+                    <td className="px-3 py-2 text-right text-xs">{row.unpriced ? "—" : <TimeCell time={timeOf(row.typeId, row.units[option.key])} />}</td>
                   </Fragment>
                 ))}
               </tr>

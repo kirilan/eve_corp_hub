@@ -11,6 +11,7 @@ import {
   pgEnum,
   pgTable,
   primaryKey,
+  real,
   text,
   timestamp,
   uniqueIndex,
@@ -335,6 +336,25 @@ export const marketSnapshots = pgTable("market_snapshots", {
   // Last failure, cleared by the next success; the previous read's prices stay in use meanwhile.
   error: text("error"),
 });
+
+/**
+ * How fast each type trades in a region, from ESI's daily market history, for the calculator's time to
+ * sell. ESI keeps history per region, not per station, and refreshes it once a day (11:05 UTC); this
+ * keeps only the figures the estimate uses. Public game data, shared by every profile.
+ */
+export const marketHistory = pgTable(
+  "market_history",
+  {
+    regionId: eveId("region_id").notNull(),
+    typeId: eveId("type_id").notNull(),
+    // Units traded per day over the last 30 days, days without trades counting as none.
+    volume: real("volume").notNull(),
+    // Volume-weighted average price over the last 7 days (30 if it did not trade in 7); null with no trades.
+    average: real("average"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.regionId, t.typeId] })],
+);
 
 export type User = typeof users.$inferSelect;
 export type Character = typeof characters.$inferSelect;

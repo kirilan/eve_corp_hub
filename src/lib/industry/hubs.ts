@@ -10,6 +10,8 @@ type Station = {
   station: string;
   locationId: number;
   regionId: number;
+  // Region the daily market history is read for: ESI keeps it per region, not per station.
+  regionName: string;
   structure: false;
   // Base reprocessing yield and the station's tax before standings.
   baseYield: number;
@@ -24,7 +26,10 @@ type Structure = {
   station: string;
   locationId: number;
   regionId: number;
+  regionName: string;
   structure: true;
+  // The owner's broker fee as the order window shows it, the default until the player enters another.
+  brokerFee: number;
   // Ore yield bonus of the system's security, applied only when a reprocessing rig is fitted.
   securityBonus: number;
 };
@@ -35,6 +40,7 @@ export const HUBS = {
     station: "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
     locationId: 60003760,
     regionId: 10000002,
+    regionName: "The Forge",
     structure: false,
     baseYield: 0.5,
     stationTake: 0.05,
@@ -46,7 +52,10 @@ export const HUBS = {
     station: "4-HWWF - WinterCo. Central Station",
     locationId: 1053970513596,
     regionId: 10000003,
+    regionName: "Vale of the Silent",
     structure: true,
+    // What the order window shows for a sell order there (checked by the user in game, 2026-11-06).
+    brokerFee: 0,
     // Null-sec.
     securityBonus: 0.12,
   },

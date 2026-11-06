@@ -4,8 +4,8 @@ import { type Hub, HUB_KEYS, hubInfo } from "./hubs";
  * Reprocessing yields, taxes and fees: the formulas, and the settings the calculator works them out
  * from. Pure, so the browser recomputes as the player changes a skill or a rate. Sources (checked
  * 2026-11-06): EVE University's Reprocessing and Tax pages (wiki.eveuniversity.org), CCP's patch notes
- * for the sales tax (7.5% since 2025-03-12) and the Upwell broker fee (0.5% SCC surcharge plus the
- * owner's share, 1% at the least).
+ * for the sales tax (7.5% since 2025-03-12). A structure's broker fee is the owner's: the order
+ * window shows it, and each hub records what it showed (`HUBS`).
  */
 
 export const SKILL = {
@@ -127,13 +127,13 @@ export function fromPercent(text: string): number {
 }
 
 /**
- * Rates with no character picked: every skill at V and no standings. A structure's own rates are
- * unknown until the player enters them: reprocessing tax 0, broker fee at the 1% minimum.
+ * Rates with no character picked: every skill at V and no standings. A structure's reprocessing tax is
+ * unknown until the player enters it (0 until then); its broker fee is the one recorded for the hub.
  */
 export function defaultHubSettings(hub: Hub): HubSettings {
   const info = hubInfo(hub);
   const sales = percentText(salesTax(5));
-  if (info.structure) return { reprocessingTax: "0", salesTax: sales, brokerFee: "1", structure: "citadel", rig: 0 };
+  if (info.structure) return { reprocessingTax: "0", salesTax: sales, brokerFee: percentText(info.brokerFee), structure: "citadel", rig: 0 };
   return {
     reprocessingTax: percentText(npcReprocessingTax(info.stationTake, 0)),
     salesTax: sales,

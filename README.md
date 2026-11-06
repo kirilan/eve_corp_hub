@@ -18,8 +18,8 @@ profile can see follows its **main character's corporation**.
   contract sales, rewards) with the taxes and fees on it, across all your characters. Only you
   see it.
 - **Reprocess or sell**: paste a list of items to see what they bring in Jita or 4-HWWF, sold as
-  they are or reprocessed with and without your skills, after taxes and fees, and which way pays
-  more for each.
+  they are or reprocessed with and without your skills, after taxes and fees, which way pays
+  more for each, and roughly how long it takes to sell.
 - **One profile for all your alts**, across any number of EVE accounts.
 
 ## How to use it
@@ -204,11 +204,22 @@ total also says what reprocessing only those items would bring. Signed-in users 
   - **Sales tax**: 7.5% × (1 − 11% per level of Accounting), on every sale.
   - **Broker fee**, only when listing: in Jita 3% − 0.3% per level of Broker Relations − 0.03% per
     point of standing with Caldari State − 0.02% per point with Caldari Navy (plain standings). At
-    4-HWWF the owner's rate plus a 0.5% SCC surcharge, at least 1%, skills do not apply: the player
-    enters it (1% by default).
+    4-HWWF the owner sets it and skills do not apply: 0% by default, which is what its order window
+    showed (2026-11-06, `HUBS` in `hubs.ts`); the player can enter another.
 - **Prices**: *Sell now* walks down the hub's buy orders, so a big stack fetches less per unit and may
   not sell in full; *List* prices every unit at the lowest sell order. The arithmetic runs in the
   browser (`src/lib/industry/reprocess.ts`), so switching basis, skills or rates needs no round trip.
+- **Time to sell** (`src/lib/industry/pace.ts`): from ESI's daily market history for the hub's region
+  (The Forge, Vale of the Silent; ESI keeps no per-station history), units traded a day over the last
+  30 days. History does not say which side of a trade was the order, so the share that filled sell
+  orders is read from where the last week's average price sits between the top buy and lowest sell
+  order (kept between 10% and 90%). *List* assumes the order sits at the lowest price: units ÷ (daily
+  volume × sell share). *Sell now* sells what the buy orders hold at once, walking down the book, and
+  the rest at units ÷ (daily volume × buy share); it also reports how far the stack walks the price
+  down. Each option card gives the time until 90% of the value has sold and until all of it, items
+  and materials weighted by value. History is cached in `market_history` (figures only, not the
+  daily rows) and read again after ESI's 11:05 UTC refresh; if ESI fails, the appraisal still works
+  without an estimate.
 - **Jita** is Jita IV - Moon 4 - Caldari Navy Assembly Plant, read from the public regional market one
   type at a time; only orders in that station count.
 - **4-HWWF** (WinterCo. Central Station) is a player structure, and the regional feed carries none of

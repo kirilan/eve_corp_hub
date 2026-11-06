@@ -2,6 +2,7 @@ import "server-only";
 import { deadlineSignal, OPERATION_TIMEOUT_MS } from "@/lib/eve/deadline";
 import { typeNames, typesByName } from "@/lib/eve/types";
 import { type Hub } from "./hubs";
+import { salesPace } from "./history";
 import { hubPrices } from "./market";
 import { ORE_SKILL_NAMES, reprocessing } from "./materials";
 import { parseItemList } from "./parse";
@@ -17,8 +18,9 @@ const MAX_UNKNOWN_SHOWN = 50;
 
 /**
  * Reads a pasted item list and looks up everything the calculator needs: each item's reprocessing
- * materials, and order books at the hub for the items and their materials. The figures themselves are
- * worked out in the browser (`appraise`), so the price basis and tax can change without a round trip.
+ * materials, order books at the hub for the items and their materials, and how fast they trade in its
+ * region. The figures themselves are worked out in the browser (`appraise`, `timeSummaries`), so the
+ * price basis and tax can change without a round trip.
  */
 export async function appraiseItems(viewerId: string, text: string, hub: Hub): Promise<Appraisal> {
   if (text.length > MAX_INPUT_CHARS) throw new AppraisalError(`That list is too long: paste at most ${MAX_INPUT_CHARS.toLocaleString("en-US")} characters at a time.`);
@@ -55,7 +57,15 @@ export async function appraiseItems(viewerId: string, text: string, hub: Hub): P
   const materialIds = [...new Set(items.flatMap((item) => item.reprocess?.materials.map(([typeId]) => typeId) ?? []))];
   const oreSkills = [...new Set(items.map((item) => item.reprocess?.oreSkill).filter((skill) => skill != null))];
   const materialNames = await typeNames(materialIds, signal);
-  const prices = await hubPrices(hub, [...quantities.keys(), ...materialIds], viewerId, signal);
+  const priced = [...quantities.keys(), ...materialIds];
+  // History only feeds the time-to-sell estimate: the appraisal stands without it.
+  const [prices, pace] = await Promise.all([
+    hubPrices(hub, priced, viewerId, signal),
+    salesPace(hub, priced, signal).catch((error: unknown) => {
+      console.warn(`market history unavailable at ${hub}`, error);
+      return { pace: new Map(), warnings: ["Could not read EVE's market history; there is no time-to-sell estimate."] };
+    }),
+  ]);
 
   return {
     hub,
@@ -63,10 +73,11 @@ export async function appraiseItems(viewerId: string, text: string, hub: Hub): P
     materialNames: Object.fromEntries(materialNames),
     oreSkillNames: Object.fromEntries(oreSkills.map((skill) => [skill, ORE_SKILL_NAMES[skill] ?? `Skill ${skill}`])),
     books: trimmedBooks(items, prices.books),
+    pace: Object.fromEntries(pace.pace),
     unknown: unknown.slice(0, MAX_UNKNOWN_SHOWN),
     pricesAsOf: prices.asOf?.toISOString() ?? null,
     pricesAvailable: prices.available,
-    warnings: [...prices.warnings, ...(unknown.length > MAX_UNKNOWN_SHOWN ? [`${unknown.length - MAX_UNKNOWN_SHOWN} more lines were not recognised.`] : [])],
+    warnings: [...prices.warnings, ...pace.warnings, ...(unknown.length > MAX_UNKNOWN_SHOWN ? [`${unknown.length - MAX_UNKNOWN_SHOWN} more lines were not recognised.`] : [])],
   };
 }
 

@@ -1,5 +1,6 @@
 import type { PriceLevel } from "@/db/schema";
 import type { Hub } from "./hubs";
+import type { Pace } from "./pace";
 
 /**
  * Reprocess-or-sell arithmetic, run in the browser so the price basis, skills and rates change the
@@ -35,6 +36,8 @@ export type Appraisal = {
   // Processing skills of the pasted ore and ice, by type id.
   oreSkillNames: Record<number, string>;
   books: Record<number, Book>;
+  // How fast each type trades in the hub's region; a type missing here has no history to go by.
+  pace: Record<number, Pace>;
   // Lines no item name could be read from.
   unknown: string[];
   // Oldest price in use, ISO time; null when the hub had no prices to give.

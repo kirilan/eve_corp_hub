@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/db";
-import { marketPrices, marketSnapshots } from "@/db/schema";
+import { marketHistory, marketPrices, marketSnapshots } from "@/db/schema";
 import { completeSignIn } from "@/lib/auth/accounts";
 import { ConsentMissingError } from "@/lib/auth/tokens";
 import { EsiError } from "@/lib/eve/esi";
@@ -9,10 +9,12 @@ import { FEATURE_SCOPES, featuresWith } from "@/lib/eve/sso";
 import { typesByName } from "@/lib/eve/types";
 import type { TypeInfo } from "@/lib/fittings/eft";
 import { AppraisalError, appraiseItems, MAX_INPUT_LINES } from "@/lib/industry/appraisal";
+import { historyRollover, salesPace } from "@/lib/industry/history";
 import { HUBS } from "@/lib/industry/hubs";
 import { booksFrom, type EsiOrder, hubPrices, PRICE_MAX_AGE_MS, structureMarketStatus } from "@/lib/industry/market";
 import { characterRates } from "@/lib/industry/character";
 import { ORE_SKILL_NAMES, reprocessing } from "@/lib/industry/materials";
+import { columnPiles, type EsiHistoryDay, formatDays, paceFrom, saleTime, sellShare, timeSummaries } from "@/lib/industry/pace";
 import { parseItemList, quantityOf } from "@/lib/industry/parse";
 import {
   ALL_V,
@@ -99,7 +101,7 @@ const order = (typeId: number, price: number, volume: number, buy: boolean, loca
 });
 
 beforeEach(async () => {
-  await db.execute(sql`TRUNCATE users, characters, market_prices, market_snapshots CASCADE`);
+  await db.execute(sql`TRUNCATE users, characters, market_prices, market_snapshots, market_history CASCADE`);
   esiPages.mockReset();
   esi.mockReset();
   characterAccessToken.mockReset();
@@ -240,7 +242,8 @@ describe("rates", () => {
 
   it("assumes every skill at V and no standings until a character is picked", () => {
     expect(defaultHubSettings("jita")).toMatchObject({ reprocessingTax: "5", salesTax: "3.375", brokerFee: "1.5" });
-    expect(defaultHubSettings("4-hwwf")).toMatchObject({ reprocessingTax: "0", salesTax: "3.375", brokerFee: "1" });
+    // 4-HWWF's owner charges no broker fee, as its order window shows.
+    expect(defaultHubSettings("4-hwwf")).toMatchObject({ reprocessingTax: "0", salesTax: "3.375", brokerFee: "0" });
   });
 
   it("fills skills and rates from a character, leaving a structure's owner-set rates and the implant alone", () => {
@@ -293,6 +296,7 @@ describe("appraise", () => {
     materialNames: { 34: "Tritanium", 35: "Pyerite", 38: "Nocxium" },
     oreSkillNames: {},
     books,
+    pace: {},
     unknown: [],
     pricesAsOf: new Date().toISOString(),
     pricesAvailable: true,
@@ -367,6 +371,134 @@ describe("appraise", () => {
     const row = appraise(appraisal(items, books), noFees(), BASE_55).items[0];
     expect(row.leftover).toBe(50);
     expect(row.options.base).toBe(102 * 4 + 8 * 10 + 0 + 50 * 1);
+  });
+});
+
+// A day of history `ago` days before `now`, at one price.
+const day = (now: Date, ago: number, volume: number, average = 10): EsiHistoryDay => ({
+  date: new Date(now.getTime() - ago * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+  average,
+  highest: average,
+  lowest: average,
+  order_count: 1,
+  volume,
+});
+
+describe("time to sell", () => {
+  const now = new Date("2026-11-06T15:00:00Z");
+  const book = { buy: [[10, 50], [8, 50]] as [number, number][], sell: [[12, 100]] as [number, number][] };
+
+  it("reads units a day over 30 days, quiet days counting as none, and the last week's average price", () => {
+    const pace = paceFrom([day(now, 40, 9000, 1), day(now, 20, 300, 11), day(now, 3, 100, 10), day(now, 1, 100, 12)], now);
+    // The 40-day-old trade is outside the window: (300 + 100 + 100) / 30.
+    expect(pace.volume).toBeCloseTo(500 / 30, 10);
+    expect(pace.average).toBeCloseTo(11, 10);
+    // Nothing in the last week: the month's average stands in.
+    expect(paceFrom([day(now, 20, 300, 11)], now).average).toBe(11);
+    expect(paceFrom([], now)).toEqual({ volume: 0, average: null });
+  });
+
+  it("splits trades between the sides by where the average sits in the spread, never all on one", () => {
+    expect(sellShare(book, 11)).toBeCloseTo(0.5, 10);
+    expect(sellShare(book, 11.5)).toBeCloseTo(0.75, 10);
+    expect(sellShare(book, 20)).toBe(0.9);
+    expect(sellShare(book, 5)).toBe(0.1);
+    // No spread or no average to go by: half each.
+    expect(sellShare({ buy: book.buy, sell: [] }, 11)).toBe(0.5);
+    expect(sellShare(book, null)).toBe(0.5);
+  });
+
+  it("lists at the pace buyers take sell orders", () => {
+    // 40 a day, half of them at sell orders.
+    const pace = { volume: 40, average: 11 };
+    expect(saleTime(book, pace, 100, "sell")).toEqual({ now: 0, days: 5, depthCost: 0, depth: 0 });
+    expect(saleTime(book, { volume: 0, average: null }, 100, "sell").days).toBeNull();
+    expect(saleTime(book, undefined, 100, "sell").days).toBeNull();
+  });
+
+  it("sells into the buy orders at once, the rest at the pace buyers use them, and counts what the depth costs", () => {
+    const pace = { volume: 40, average: 11.5 };
+    expect(saleTime(book, pace, 50, "buy")).toEqual({ now: 50, days: 0, depthCost: 0, depth: 0 });
+    const big = saleTime(book, pace, 150, "buy");
+    // 100 at once (50 at 10, 50 at 8); 50 left at 10 a day (a quarter of 40 fill buy orders).
+    expect(big).toMatchObject({ now: 100, days: 5, depthCost: 100 });
+    expect(big.depth).toBeCloseTo(0.1, 10);
+  });
+
+  it("times each column by what it sells: 90% of the value, all of it, and what sells last", () => {
+    const appraisal: Appraisal = {
+      hub: "jita",
+      items: [
+        { typeId: 44992, name: "PLEX", quantity: 10, reprocess: null },
+        { typeId: 2048, name: "Damage Control II", quantity: 1, reprocess: null },
+      ],
+      materialNames: {},
+      oreSkillNames: {},
+      books: { 44992: { buy: [[100, 10]], sell: [[110, 10]] }, 2048: { buy: [[5, 1]], sell: [[6, 1]] } },
+      // PLEX: 10 a day at sell orders, so 1 day; Damage Control II: 1 every 10 days.
+      pace: { 44992: { volume: 20, average: 105 }, 2048: { volume: 0.2, average: 5.5 } },
+      unknown: [],
+      pricesAsOf: null,
+      pricesAvailable: true,
+      warnings: [],
+    };
+    const pricing: Pricing = { basis: "sell", reprocessingTax: 0, salesTax: 0, brokerFee: 0 };
+    const result = appraise(appraisal, pricing, BASE_55);
+    expect(columnPiles(result).skills).toEqual(new Map([[44992, 10], [2048, 1]]));
+    const listed = timeSummaries(appraisal, result, "sell", 1);
+    expect(listed.asIs).toMatchObject({ most: 1, all: 10, slowest: "Damage Control II", noTrades: [], value: 1106 });
+    const now = timeSummaries(appraisal, result, "buy", 1);
+    expect(now.asIs).toMatchObject({ most: 0, all: 0, slowest: null, nowShare: 1 });
+
+    const quiet = timeSummaries({ ...appraisal, pace: { 44992: appraisal.pace[44992] } }, result, "sell", 1);
+    expect(quiet.asIs).toMatchObject({ most: 1, all: null, noTrades: ["Damage Control II"] });
+  });
+
+  it("says how long in words a player reads at a glance", () => {
+    expect([null, 0, 0.01, 0.2, 1.2, 3.4, 20, 100, 400].map(formatDays)).toEqual([
+      "no recent trades",
+      "at once",
+      "within the hour",
+      "~5 hours",
+      "~1 day",
+      "~3 days",
+      "~3 weeks",
+      "~3 months",
+      "over a year",
+    ]);
+  });
+});
+
+describe("salesPace", () => {
+  it("rolls over at 11:05 UTC, when ESI publishes the day's history", () => {
+    expect(historyRollover(new Date("2026-11-06T11:04:00Z"))).toEqual(new Date("2026-11-05T11:05:00Z"));
+    expect(historyRollover(new Date("2026-11-06T11:05:00Z"))).toEqual(new Date("2026-11-06T11:05:00Z"));
+  });
+
+  it("reads a type's regional history once a day and keeps only the figures the estimate uses", async () => {
+    const now = new Date();
+    esi.mockImplementation(async (path: string) => {
+      if (path.includes("type_id=99")) throw new EsiError("Type not found!", 404);
+      return [day(now, 1, 300, 10)];
+    });
+    const signal = new AbortController().signal;
+    const first = await salesPace("4-hwwf", [34, 99], signal);
+    expect(esi).toHaveBeenCalledWith("/markets/10000003/history?type_id=34", { signal });
+    expect(first.pace.get(34)).toEqual({ volume: 10, average: 10 });
+    // A type the market does not know is kept as never traded, not asked for again.
+    expect(first.pace.get(99)).toEqual({ volume: 0, average: null });
+    expect(first.warnings).toEqual([]);
+
+    await salesPace("4-hwwf", [34, 99], signal);
+    expect(esi).toHaveBeenCalledTimes(2);
+
+    await db.update(marketHistory).set({ fetchedAt: new Date(historyRollover(now).getTime() - 1000) });
+    esi.mockRejectedValue(new EsiError("down", 503));
+    const stale = await salesPace("4-hwwf", [34, 35], signal);
+    // Yesterday's figures stand in when ESI fails; a type never read has none.
+    expect(stale.pace.get(34)).toEqual({ volume: 10, average: 10 });
+    expect(stale.pace.has(35)).toBe(false);
+    expect(stale.warnings[0]).toMatch(/did not answer for 2 items; 1 have no time-to-sell estimate/);
   });
 });
 
@@ -495,6 +627,9 @@ describe("appraiseItems", () => {
     expect(result.materialNames).toEqual({ 34: "Tritanium", 35: "Pyerite", 38: "Nocxium" });
     expect(result.books[185]).toEqual({ buy: [[3, 1_000_000]], sell: [[4, 10]] });
     expect(result.pricesAvailable).toBe(true);
+    // ESI's history was not mocked to answer: no estimate, but the appraisal stands.
+    expect(result.pace).toEqual({});
+    expect(result.warnings.some((warning) => /market history/.test(warning))).toBe(true);
   });
 
   it("refuses a list with nothing it knows", async () => {
