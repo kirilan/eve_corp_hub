@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate.mts",
     "super-user": "tsx --env-file-if-exists=.env.local scripts/super-user.mts",
-    "vercel-build": "tsx scripts/migrate.mts --deploy && next build"
+    "vercel-build": "tsx scripts/migrate.mts --deploy && next build",
+    "sde:materials": "tsx scripts/sde-materials.mts"
   },
   "dependencies": {
     "@vercel/functions": "3.10.1",

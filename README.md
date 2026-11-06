@@ -17,6 +17,9 @@ profile can see follows its **main character's corporation**.
 - **Personal income**: charts what your characters earn (bounties, ESS, missions, market and
   contract sales, rewards) with the taxes and fees on it, across all your characters. Only you
   see it.
+- **Reprocess or sell**: paste a list of items to see what they bring in Jita or 4-HWWF, sold as
+  they are or reprocessed with and without your skills, after taxes and fees, and which way pays
+  more for each.
 - **One profile for all your alts**, across any number of EVE accounts.
 
 ## How to use it
@@ -32,6 +35,11 @@ profile can see follows its **main character's corporation**.
    - *Allow fitting sync*: read and write that character's saved fittings, for importing fits
      and sending them to the game.
    - *Allow income tracker*: read that character's wallet, for *Personal income*.
+   - *Allow market reading*: read the markets of player structures that character can dock at, so
+     *Industry* can price items at 4-HWWF. Market prices are the same for everyone, so one such
+     character serves every Drydock user.
+   - *Allow skills & standings*: read that character's skill levels and NPC standings when you pick it
+     on *Industry*, to estimate its reprocessing yield, taxes and fees. Nothing is stored.
 
    Allow only what you use. *Revoke access* removes it again; so does removing the app from
    your third-party applications on the EVE website.
@@ -48,6 +56,8 @@ profile can see follows its **main character's corporation**.
 8. **Track income**: once a character allows the income tracker, *Personal income* charts its
    earnings. Filter by time range, income source and character; stack by character or source;
    turn on *Taxes & fees* to see what was charged and what you kept.
+9. **Reprocess or sell**: on *Industry*, paste items (select them in an inventory window and copy),
+   choose where they are and whose skills to use, and *Appraise*.
 
 ### For corporation leaders
 
@@ -75,7 +85,9 @@ profile can see follows its **main character's corporation**.
   main, the oldest remaining character becomes main.
 - **Consent is opt-in per character**: logging in requests no scopes. *Allow fitting sync*
   asks that character for `esi-fittings.read_fittings.v1` and `esi-fittings.write_fittings.v1`;
-  *Allow income tracker* asks for `esi-wallet.read_character_wallet.v1`. A character holds one
+  *Allow income tracker* asks for `esi-wallet.read_character_wallet.v1`; *Allow market reading*
+  asks for `esi-markets.structure_markets.v1`; *Allow skills & standings* asks for
+  `esi-skills.read_skills.v1` and `esi-characters.read_standings.v1`. A character holds one
   refresh token and each grant replaces it, so a grant re-requests the features the character
   already allows (`featuresWith` in `src/lib/eve/sso.ts`). *Revoke access* drops all of them at
   once; to keep only one, revoke and grant that one again. Refresh tokens are stored AES-256-GCM
@@ -147,6 +159,58 @@ tracker; `/ratting` redirects here.)
 - **Revoking** stops syncing and keeps the history; *Delete history* on the page removes it.
   Unlinking a character, or the character moving to another account, deletes it.
 
+## Industry: reprocess or sell
+
+`/industry` takes a pasted item list and a location, Jita or 4-HWWF, and compares three ways of
+turning the items into ISK there: sell them as they are, reprocess them with no skills, or reprocess
+them with a character's skills, with the materials sold at the same hub. Every figure is what reaches
+the wallet after sales tax and broker fees. Each item shows which way pays more, and each reprocessing
+total also says what reprocessing only those items would bring. Signed-in users only.
+
+- **Pasting**: EVE inventory, assets and contract lists (tab-separated name and quantity), lines like
+  `Warrior II x5`, `5x Warrior II`, `Tritanium 1000` or `1000 Tritanium`, and EFT fits. A line can be
+  read more than one way, so the first reading whose name EVE knows wins (`src/lib/industry/parse.ts`).
+  Repeated items are added together; lines naming nothing are listed as not recognised.
+- **Reprocessing data**: materials, portion sizes and each ore's processing skill come from CCP's
+  static data export, shipped as `src/lib/industry/type-materials.json`. ESI has no reprocessing data.
+  Regenerate the file after a patch with `pnpm sde:materials <folder>` (see the script for where to
+  download the export). Stacks reprocess in whole portions (ammunition in 100s), each material rounded
+  down; units short of a portion count as sold as they are.
+- **Whose skills**: *Every skill at V, no standings* by default, or one of the profile's characters
+  that allows skills and standings: its active skill levels (an Alpha clone counts at what it can use)
+  and its standings with the station's owner corporation and faction are read live and used only in
+  the page. Every value is then editable under *Skills, taxes and fees*, so the player can match what
+  the game shows. The formulas are in `src/lib/industry/rates.ts`, with their sources:
+  - **Items** (modules, ships, ammunition): 50% base × (1 + 2% per level of Scrapmetal Processing).
+    Rigs, structures and implants do not change it.
+  - **Ore and ice**: the facility's base × (1 + 3% per level of Reprocessing) × (1 + 2% per level of
+    Reprocessing Efficiency) × (1 + 2% per level of the ore's own skill, e.g. Simple Ore Processing)
+    × (1 + the RX-801/802/804 implant's 1/2/4%). Jita's base is 50%. At 4-HWWF it is
+    (50 + rig: 0, 1 or 3) × (1 + 12% null-sec, only with a rig) × (1 + Athanor 2% / Tatara 5.5%);
+    the player picks the structure and rig.
+  - **Reprocessing tax**: in Jita, the station's 5% (ESI's `reprocessing_stations_take`) × (1 − 0.15 ×
+    standing with Caldari Navy), nothing from 6.67, with Connections or Diplomacy applied to the
+    standing. At 4-HWWF the owner sets it and ESI does not publish it: the player enters it (0% by
+    default). It is counted as that share of the materials' value.
+  - **Sales tax**: 7.5% × (1 − 11% per level of Accounting), on every sale.
+  - **Broker fee**, only when listing: in Jita 3% − 0.3% per level of Broker Relations − 0.03% per
+    point of standing with Caldari State − 0.02% per point with Caldari Navy (plain standings). At
+    4-HWWF the owner's rate plus a 0.5% SCC surcharge, at least 1%, skills do not apply: the player
+    enters it (1% by default).
+- **Prices**: *Sell now* walks down the hub's buy orders, so a big stack fetches less per unit and may
+  not sell in full; *List* prices every unit at the lowest sell order. The arithmetic runs in the
+  browser (`src/lib/industry/reprocess.ts`), so switching basis, skills or rates needs no round trip.
+- **Jita** is Jita IV - Moon 4 - Caldari Navy Assembly Plant, read from the public regional market one
+  type at a time; only orders in that station count.
+- **4-HWWF** (WinterCo. Central Station) is a player structure, and the regional feed carries none of
+  its sell orders. Its whole market is read through `/markets/structures/{id}` with the token of a
+  character that allows market reading and can dock there: the last one that worked, then the
+  viewer's own, then anyone's. Until such a character exists, 4-HWWF has no prices.
+- **Caching**: order books are kept in `market_prices` (the best 50 price levels per side) and read
+  again when older than 15 minutes. A structure read takes a two-minute lease on its
+  `market_snapshots` row, so concurrent requests read it once, and a failed read is not retried on
+  every request; the last good prices stay in use, with a warning.
+
 ## History, audit log, doctrines, super users
 
 - **Version history**: every change to a fit's contents (name, description, hull, items) is a
@@ -211,6 +275,8 @@ src/lib/eve/{sso,esi,names}.ts         EVE SSO and ESI clients
 src/lib/permissions.ts                 who may view/edit/delete a fit, manage doctrines, read the audit log
 src/lib/income/{sync,report}.ts        wallet journal sync (income and its charges only) and the tracker's figures
 src/app/income, api/cron/income        personal income page; daily sync for Vercel Cron
+src/app/industry                       reprocess-or-sell calculator (Server Action + client component)
+src/lib/industry/                      item list parsing, reprocessing table, yields/taxes/fees, hub prices
 src/lib/audit.ts                       audit log writes (in-transaction) and scoped reads
 src/lib/doctrines.ts                   doctrines and their fits
 src/lib/auth/super-users.ts            super user flag and the admin profile list
@@ -226,8 +292,9 @@ normal wire protocol.
 
 1. Register a **development** application at https://developers.eveonline.com/applications:
    - callback URL `http://localhost:3003/auth/callback`
-   - scopes `esi-fittings.read_fittings.v1`, `esi-fittings.write_fittings.v1` and
-     `esi-wallet.read_character_wallet.v1`
+   - scopes `esi-fittings.read_fittings.v1`, `esi-fittings.write_fittings.v1`,
+     `esi-wallet.read_character_wallet.v1`, `esi-markets.structure_markets.v1`,
+     `esi-skills.read_skills.v1` and `esi-characters.read_standings.v1`
 2. `cp .env.example .env.local`, then fill in the client id/secret, an encryption key
    (`openssl rand -base64 32`) and `ESI_CONTACT`.
 3. Run:
@@ -265,8 +332,10 @@ Preview builds skip it, so a branch can never change the production schema.
    to this project. It provides `DATABASE_URL` (pooled, used by the app) and
    `DATABASE_URL_UNPOOLED` (used for migrations).
 3. Register a **production** EVE application with callback
-   `https://<production domain>/auth/callback`, the two `esi-fittings` scopes and
-   `esi-wallet.read_character_wallet.v1`. EVE SSO refuses any scope the application does not list.
+   `https://<production domain>/auth/callback`, the two `esi-fittings` scopes,
+   `esi-wallet.read_character_wallet.v1`, `esi-markets.structure_markets.v1`,
+   `esi-skills.read_skills.v1` and `esi-characters.read_standings.v1`. EVE SSO refuses any scope the
+   application does not list.
 4. Set for Production: `APP_URL` (`https://<production domain>`), `EVE_CLIENT_ID`,
    `EVE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` (a new `openssl rand -base64 32`; never reuse the
    dev key), `ESI_CONTACT`, and `CRON_SECRET` (`openssl rand -hex 32`; Vercel Cron sends it to

@@ -18,7 +18,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: { default: SITE_NAME, template: `%s · ${SITE_NAME}` },
-  description: "Store, share and sync EVE Online ship fittings with your corporation, fly doctrines, and track your income.",
+  description:
+    "Store, share and sync EVE Online ship fittings with your corporation, fly doctrines, track your income, and decide whether loot is worth more reprocessed.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -34,6 +35,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               ["/fittings", "My fittings"],
               ["/library", "Library"],
               ["/doctrines", "Doctrines"],
+              ["/industry", "Industry"],
               ["/income", "Personal income"],
               ["/characters", "Characters"],
             ].map(([href, label]) => (

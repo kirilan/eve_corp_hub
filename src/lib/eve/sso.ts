@@ -18,6 +18,13 @@ export const FEATURE_SCOPES = {
   fittings: ["esi-fittings.read_fittings.v1", "esi-fittings.write_fittings.v1"],
   // Personal income tracker: reads the wallet journal, keeps only income and the taxes and fees on it.
   wallet: ["esi-wallet.read_character_wallet.v1"],
+  // Reprocessing calculator: reads the market of a player structure the character can dock at
+  // (4-HWWF). Public game data, shared with everyone who uses the calculator; nothing about the
+  // character is read.
+  markets: ["esi-markets.structure_markets.v1"],
+  // Reprocessing calculator: skill levels and NPC standings, read when the owner picks the character to
+  // estimate yields, taxes and fees. Only the few the calculator uses are kept, and only in the page.
+  skills: ["esi-skills.read_skills.v1", "esi-characters.read_standings.v1"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type Feature = keyof typeof FEATURE_SCOPES;

@@ -38,6 +38,12 @@ const FEATURES: { title: string; href: string; link: string; body: string }[] = 
     body: "Chart bounties, ESS payouts, missions, market and contract sales and rewards across all your characters, with the taxes and fees on them. Only you can see it.",
   },
   {
+    title: "Reprocess or sell",
+    href: "/industry",
+    link: "Industry",
+    body: "Paste a list of items to see what they bring in Jita or 4-HWWF after taxes and fees: sold as they are, or reprocessed with or without your character's skills and the materials sold. Each item shows which way pays more.",
+  },
+  {
     title: "All your alts, one profile",
     href: "/characters",
     link: "Characters",
@@ -64,8 +70,10 @@ const STEPS: { title: string; body: React.ReactNode }[] = [
     body: (
       <>
         Also on Characters, per character: <em>Allow fitting sync</em> (read and write its saved fittings, for importing
-        and sending fits) and <em>Allow income tracker</em> (read its wallet, for Personal income). Allow only what you
-        use; revoke on the same page at any time.
+        and sending fits), <em>Allow income tracker</em> (read its wallet, for Personal income),{" "}
+        <em>Allow market reading</em> (read the markets of structures it can dock at, for 4-HWWF prices on Industry) and{" "}
+        <em>Allow skills &amp; standings</em> (estimate its yields, taxes and fees on Industry). Allow only what you use;
+        revoke on the same page at any time.
       </>
     ),
   },

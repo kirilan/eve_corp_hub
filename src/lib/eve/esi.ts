@@ -43,20 +43,29 @@ export async function esi<T>(path: string, init: EsiInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
-// Wallet journals of busy traders can run to dozens of pages; nothing we read needs more.
+// Wallet journals of busy traders can run to dozens of pages; a caller that needs more says so.
 const MAX_PAGES = 50;
+// Pages after the first are fetched this many at a time.
+const PAGE_CONCURRENCY = 8;
 
-/** Every page of a paged GET (`?page=`, total in `X-Pages`), concatenated in page order. */
-export async function esiPages<T>(path: string, init: { token?: string } = {}): Promise<T[]> {
+/**
+ * Every page of a paged GET (`?page=`, total in `X-Pages`), concatenated in page order. The first page
+ * says how many there are; the rest are fetched in parallel.
+ */
+export async function esiPages<T>(path: string, init: { token?: string; maxPages?: number } = {}): Promise<T[]> {
   const separator = path.includes("?") ? "&" : "?";
-  const out: T[] = [];
-  let pages = 1;
-  for (let page = 1; page <= Math.min(pages, MAX_PAGES); page++) {
-    const response = await request(`${path}${separator}page=${page}`, init);
-    pages = Number(response.headers.get("X-Pages") ?? 1) || 1;
-    out.push(...((await response.json()) as T[]));
+  const page = async (n: number) => {
+    const response = await request(`${path}${separator}page=${n}`, { token: init.token });
+    return { pages: Number(response.headers.get("X-Pages") ?? 1) || 1, rows: (await response.json()) as T[] };
+  };
+  const first = await page(1);
+  const last = Math.min(first.pages, init.maxPages ?? MAX_PAGES);
+  const out = [first.rows];
+  for (let start = 2; start <= last; start += PAGE_CONCURRENCY) {
+    const batch = Array.from({ length: Math.min(PAGE_CONCURRENCY, last - start + 1) }, (_, i) => page(start + i));
+    out.push(...(await Promise.all(batch)).map((p) => p.rows));
   }
-  return out;
+  return out.flat();
 }
 
 export type Affiliation = { character_id: number; corporation_id: number; alliance_id?: number; faction_id?: number };

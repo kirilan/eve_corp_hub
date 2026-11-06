@@ -23,6 +23,8 @@ function grantUrl(scopes: string[], feature: Feature): string {
 const FEATURE_LABELS: Record<Feature, { on: string; off: string; grant: string }> = {
   fittings: { on: "Fitting sync allowed", off: "No fitting access", grant: "Allow fitting sync" },
   wallet: { on: "Income tracker allowed", off: "No wallet access", grant: "Allow income tracker" },
+  markets: { on: "Market reading allowed", off: "No market access", grant: "Allow market reading" },
+  skills: { on: "Skills & standings allowed", off: "No skills access", grant: "Allow skills & standings" },
 };
 
 export default function CharactersPage({ searchParams }: PageProps<"/characters">) {
@@ -46,6 +48,14 @@ export default function CharactersPage({ searchParams }: PageProps<"/characters"
           Revoking access keeps the history already collected until you delete it on the{" "}
           <Link href="/income" className="text-accent hover:underline">Personal income</Link> page; unlinking a
           character deletes it.
+        </p>
+        <p className="mt-2 max-w-2xl text-sm text-muted">
+          <em>Market reading</em> reads the market of player structures the character can dock at, so{" "}
+          <Link href="/industry" className="text-accent hover:underline">Industry</Link> can price items at 4-HWWF.
+          Market prices are the same for everyone, so they are shared with every Drydock user; nothing about the
+          character itself is read. <em>Skills &amp; standings</em> reads the character&apos;s skill levels and NPC
+          standings when you pick it on Industry, to estimate its reprocessing yield, taxes and fees; they are used
+          on that page only and never stored.
         </p>
       </div>
       <Suspense fallback={<p className="text-muted">Loading characters…</p>}>

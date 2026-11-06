@@ -57,6 +57,13 @@
       "when": 1792334322637,
       "tag": "0007_cron_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793947213461,
+      "tag": "0008_market_prices",
+      "breakpoints": true
     }
   ]
 }

@@ -294,6 +294,45 @@ export const cronRuns = pgTable(
   (t) => [index("cron_runs_job_started_idx").on(t.job, t.startedAt)],
 );
 
+/** One price on one side of an order book and the units on offer at it: `[price, units]`. */
+export type PriceLevel = [number, number];
+
+/**
+ * The best levels of each type's order book at a trade hub, for the reprocessing calculator: buy
+ * levels from the highest price down, sell levels from the lowest up. A public hub's types are read one
+ * at a time and refreshed when stale, so a row with no levels means no orders. A player structure's
+ * market is read whole (see `marketSnapshots`) and replaces its rows, so there a missing row means no
+ * orders. Market data is public game data, shared by every profile.
+ */
+export const marketPrices = pgTable(
+  "market_prices",
+  {
+    locationId: eveId("location_id").notNull(),
+    typeId: eveId("type_id").notNull(),
+    buy: jsonb("buy").$type<PriceLevel[]>().notNull(),
+    sell: jsonb("sell").$type<PriceLevel[]>().notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.locationId, t.typeId] })],
+);
+
+/**
+ * Whole-market reads of player structures, one row per structure. Reading a structure's market needs
+ * a token from a character that can dock there and allows market reading.
+ */
+export const marketSnapshots = pgTable("market_snapshots", {
+  locationId: eveId("location_id").primaryKey(),
+  // Last successful read; null until the first one.
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+  // Last read started, successful or not. Doubles as a short lease so concurrent requests read the market once.
+  attemptedAt: timestamp("attempted_at", { withTimezone: true }).notNull().defaultNow(),
+  // Whose token made the last successful read; tried first next time.
+  readerCharacterId: eveId("reader_character_id").references(() => characters.id, { onDelete: "set null" }),
+  orders: integer("orders"),
+  // Last failure, cleared by the next success; the previous read's prices stay in use meanwhile.
+  error: text("error"),
+});
+
 export type User = typeof users.$inferSelect;
 export type Character = typeof characters.$inferSelect;
 export type Fitting = typeof fittings.$inferSelect;
