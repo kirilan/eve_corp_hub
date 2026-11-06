@@ -85,6 +85,13 @@
       "when": 1794001560012,
       "tag": "0011_trade_transactions",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794004388359,
+      "tag": "0012_industry_jobs",
+      "breakpoints": true
     }
   ]
 }

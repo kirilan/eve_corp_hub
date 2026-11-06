@@ -2,7 +2,7 @@
 
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
-import type { FormState } from "@/app/fittings/actions";
+import type { FormState } from "@/app/(fittings)/fittings/actions";
 import type { Viewer } from "@/lib/auth/accounts";
 import { getViewer } from "@/lib/auth/viewer";
 import { addFitToDoctrine, createDoctrine, deleteDoctrine, removeFitFromDoctrine, updateDoctrine } from "@/lib/doctrines";

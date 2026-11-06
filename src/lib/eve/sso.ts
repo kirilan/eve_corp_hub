@@ -29,6 +29,9 @@ export const FEATURE_SCOPES = {
   // Personal income: the character's open market orders and where each stands in its station's
   // book (outbid, undercut). Read live when the owner opens the page; nothing is stored.
   orders: ["esi-markets.read_character_orders.v1"],
+  // Personal income: the character's industry jobs and blueprints, so trade profit can cost what it
+  // built from the materials it used. Read with the wallet sync; only jobs and blueprint ME/TE are kept.
+  industry: ["esi-industry.read_character_jobs.v1", "esi-characters.read_blueprints.v1"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type Feature = keyof typeof FEATURE_SCOPES;

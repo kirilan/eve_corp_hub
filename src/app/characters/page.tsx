@@ -33,6 +33,7 @@ const FEATURE_LABELS: Record<Feature, { on: string; off: string; grant: string }
   markets: { on: "Market reading allowed", off: "No market access", grant: "Allow market reading" },
   skills: { on: "Skills & standings allowed", off: "No skills access", grant: "Allow skills & standings" },
   orders: { on: "Order tracking allowed", off: "No order access", grant: "Allow order tracking" },
+  industry: { on: "Industry tracking allowed", off: "No industry access", grant: "Allow industry tracking" },
 };
 
 export default function CharactersPage({ searchParams }: PageProps<"/characters">) {
@@ -54,7 +55,9 @@ export default function CharactersPage({ searchParams }: PageProps<"/characters"
           contract sales, rewards) and the taxes and fees charged on it, plus the character&apos;s market
           transactions (what it bought and sold, at what price) for trade profit, visible to you alone; nothing else
           in the wallet is stored. <em>Order tracking</em> reads the character&apos;s open market orders to show
-          whether each is still the best price; orders are read when you open Personal income and not stored.
+          whether each is still the best price; orders are read when you open Personal income and not stored.{" "}
+          <em>Industry tracking</em> reads the character&apos;s industry jobs and blueprints, so an item it built is costed
+          from the materials that went into it; it works with the income tracker.
           Revoking access keeps the history already collected until you delete it on the{" "}
           <Link href="/income" className="text-accent hover:underline">Personal income</Link> page; unlinking a
           character deletes it.

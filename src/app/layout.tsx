@@ -32,9 +32,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               {SITE_NAME}
             </Link>
             {[
-              ["/fittings", "My fittings"],
-              ["/library", "Library"],
-              ["/doctrines", "Doctrines"],
+              // My fittings, Library and Doctrines, with tabs between them on those pages.
+              ["/fittings", "Fittings"],
               ["/industry", "Industry"],
               ["/income", "Personal income"],
               ["/characters", "Characters"],

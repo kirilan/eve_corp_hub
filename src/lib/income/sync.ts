@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/db";
 import { lockOwnedCharacter } from "@/lib/auth/accounts";
 import { deadlineSignal, OPERATION_TIMEOUT_MS } from "@/lib/eve/deadline";
-import { characters, walletEntries, walletSyncs, walletTransactions } from "@/db/schema";
+import { characterBlueprints, characters, industryJobs, walletEntries, walletSyncs, walletTransactions } from "@/db/schema";
 import { characterAccessToken, ConsentMissingError } from "@/lib/auth/tokens";
 import { esi, esiPages } from "@/lib/eve/esi";
 import { FEATURE_SCOPES, hasFeature } from "@/lib/eve/sso";
@@ -39,6 +39,62 @@ export type EsiTransaction = {
   client_id: number;
   journal_ref_id: number;
 };
+
+export type EsiJob = {
+  job_id: number;
+  activity_id: number;
+  blueprint_id: number;
+  blueprint_type_id: number;
+  product_type_id?: number;
+  runs: number;
+  licensed_runs?: number;
+  successful_runs?: number;
+  cost?: number;
+  status: string;
+  facility_id: number;
+  start_date: string;
+  end_date: string;
+  completed_date?: string;
+};
+
+export type EsiBlueprint = { item_id: number; type_id: number; material_efficiency: number; time_efficiency: number; runs: number; quantity: number };
+
+export function jobRows(characterId: number, jobs: EsiJob[]): (typeof industryJobs.$inferInsert)[] {
+  return jobs.map((job) => ({
+    characterId,
+    jobId: job.job_id,
+    activityId: job.activity_id,
+    blueprintId: job.blueprint_id,
+    blueprintTypeId: job.blueprint_type_id,
+    productTypeId: job.product_type_id ?? null,
+    runs: job.runs,
+    licensedRuns: job.licensed_runs ?? null,
+    successfulRuns: job.successful_runs ?? null,
+    cost: job.cost ?? null,
+    status: job.status,
+    facilityId: job.facility_id,
+    startDate: new Date(job.start_date),
+    endDate: new Date(job.end_date),
+    completedDate: job.completed_date ? new Date(job.completed_date) : null,
+  }));
+}
+
+type IndustryRead = { jobs: EsiJob[]; blueprints: EsiBlueprint[] } | { error: string };
+
+/** A character's jobs of the last 90 days and its blueprints. A failure here is reported, never fatal to the wallet sync. */
+async function readIndustry(characterId: number, token: string, signal: AbortSignal): Promise<IndustryRead> {
+  try {
+    const [jobs, blueprints] = await Promise.all([
+      esi<EsiJob[]>(`/characters/${characterId}/industry/jobs?include_completed=true`, { token, signal }),
+      esiPages<EsiBlueprint>(`/characters/${characterId}/blueprints`, { token, signal }),
+    ]);
+    if (!Array.isArray(jobs)) throw new Error("industry jobs are not a list");
+    return { jobs, blueprints };
+  } catch (error) {
+    console.warn(`industry read failed for character ${characterId}`, error);
+    return { error: `Industry jobs could not be read: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
 
 /** Whether the tracker keeps a journal line: ISK coming in from income, or going out on charges against it. */
 function kept(entry: JournalEntry): boolean {
@@ -124,7 +180,7 @@ export async function syncCharacterIncome(userId: string, characterId: number, p
       set: { attemptedAt: now, leaseId, leaseExpiresAt: new Date(now.getTime() + OPERATION_TIMEOUT_MS + 15_000) },
       setWhere: due(new Date(now.getTime() - SYNC_INTERVAL_MS)),
     }).returning();
-    return claimed ? { ownerHash: character.ownerHash } : null;
+    return claimed ? { ownerHash: character.ownerHash, industry: hasFeature(character.scopes, "industry") } : null;
   });
   if (!claim) return;
   const ownsLease = and(eq(walletSyncs.characterId, characterId), eq(walletSyncs.leaseId, leaseId));
@@ -135,9 +191,10 @@ export async function syncCharacterIncome(userId: string, characterId: number, p
       .select({ newest: max(walletTransactions.transactionId) })
       .from(walletTransactions)
       .where(eq(walletTransactions.characterId, characterId));
-    const [journal, transactions] = await Promise.all([
+    const [journal, transactions, industry] = await Promise.all([
       esiPages<JournalEntry>(`/characters/${characterId}/wallet/journal`, { token, signal }),
       readTransactions(characterId, token, newest ?? null, signal),
+      claim.industry ? readIndustry(characterId, token, signal) : null,
     ]);
     const rows = walletRows(characterId, journal);
     const trades = transactionRows(characterId, transactions);
@@ -163,10 +220,56 @@ export async function syncCharacterIncome(userId: string, characterId: number, p
         signal.throwIfAborted();
         await tx.insert(walletTransactions).values(trades.slice(i, i + 1000)).onConflictDoNothing();
       }
+      if (industry && "jobs" in industry) {
+        // A job's row changes as it runs: status, outcome and completion are taken from the newest read.
+        const jobs = jobRows(characterId, industry.jobs);
+        for (let i = 0; i < jobs.length; i += 1000) {
+          await tx
+            .insert(industryJobs)
+            .values(jobs.slice(i, i + 1000))
+            .onConflictDoUpdate({
+              target: [industryJobs.characterId, industryJobs.jobId],
+              set: {
+                status: sql`excluded.status`,
+                successfulRuns: sql`excluded.successful_runs`,
+                completedDate: sql`excluded.completed_date`,
+                endDate: sql`excluded.end_date`,
+                cost: sql`coalesce(excluded.cost, ${industryJobs.cost})`,
+              },
+            });
+        }
+        // Blueprints are kept once seen: a used-up copy still says what ME its jobs ran at.
+        const prints = industry.blueprints.map((b) => ({
+          characterId,
+          itemId: b.item_id,
+          typeId: b.type_id,
+          materialEfficiency: b.material_efficiency,
+          timeEfficiency: b.time_efficiency,
+          runs: b.runs,
+          quantity: b.quantity,
+          firstSeen: now,
+          lastSeen: now,
+        }));
+        for (let i = 0; i < prints.length; i += 1000) {
+          await tx
+            .insert(characterBlueprints)
+            .values(prints.slice(i, i + 1000))
+            .onConflictDoUpdate({
+              target: [characterBlueprints.characterId, characterBlueprints.itemId],
+              set: {
+                materialEfficiency: sql`excluded.material_efficiency`,
+                timeEfficiency: sql`excluded.time_efficiency`,
+                runs: sql`excluded.runs`,
+                quantity: sql`excluded.quantity`,
+                lastSeen: sql`excluded.last_seen`,
+              },
+            });
+        }
+      }
       const historyFrom = new Date(now.getTime() - JOURNAL_DAYS * 24 * 60 * 60 * 1000);
       await tx.update(walletSyncs).set({
         historyFrom: sql`coalesce(${walletSyncs.historyFrom}, ${historyFrom})`,
-        syncedAt: now, error: null, leaseId: null, leaseExpiresAt: null,
+        syncedAt: now, error: industry && "error" in industry ? industry.error : null, leaseId: null, leaseExpiresAt: null,
       }).where(ownsLease);
     });
   } catch (error) {
@@ -239,6 +342,8 @@ export async function deleteIncomeHistory(userId: string, characterId: number): 
     if (!await lockOwnedCharacter(tx, userId, characterId)) throw new Error("that character is not linked to your profile");
     await tx.delete(walletEntries).where(eq(walletEntries.characterId, characterId));
     await tx.delete(walletTransactions).where(eq(walletTransactions.characterId, characterId));
+    await tx.delete(industryJobs).where(eq(industryJobs.characterId, characterId));
+    await tx.delete(characterBlueprints).where(eq(characterBlueprints.characterId, characterId));
     await tx.delete(walletSyncs).where(eq(walletSyncs.characterId, characterId));
   });
 }

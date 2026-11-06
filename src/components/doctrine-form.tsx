@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import type { FormState } from "@/app/fittings/actions";
+import type { FormState } from "@/app/(fittings)/fittings/actions";
 
 /** Name + description form shared by "new doctrine" and "edit doctrine". */
 export function DoctrineForm({

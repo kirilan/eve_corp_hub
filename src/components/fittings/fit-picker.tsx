@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import { bulkSend, type BulkState } from "@/app/fittings/actions";
+import { bulkSend, type BulkState } from "@/app/(fittings)/fittings/actions";
 import { typeIconUrl } from "@/lib/eve/images";
 import type { Visibility } from "@/lib/fittings/store";
 import { VisibilityBadge } from "./visibility-badge";

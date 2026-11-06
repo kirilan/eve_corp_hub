@@ -44,12 +44,15 @@ profile can see follows its **main character's corporation**.
      on *Industry*, to estimate its reprocessing yield, taxes and fees. Nothing is stored.
    - *Allow order tracking*: read that character's open market orders, for *Personal income*, to
      show whether each is outbid or undercut. Read when you look; nothing is stored.
+   - *Allow industry tracking*: read that character's industry jobs and blueprints, so trade
+     performance costs what it builds from the materials that went into it. Works with the income
+     tracker.
 
    *Allow all* asks for every one of these in a single EVE login, and *Add a character with all
    access* links a new character with all of them at once. Otherwise allow only what you use.
    *Revoke access* removes it again; so does removing the app from your third-party applications
    on the EVE website.
-4. **Add fits**: *My fittings → New fit* takes a pasted fit (*Copy to clipboard* in EVE's
+4. **Add fits**: *Fittings → My fittings → New fit* takes a pasted fit (*Copy to clipboard* in EVE's
    fitting window, or Pyfa's EFT export). *Import from game* lists the fits saved on a character
    and marks the ones you already have.
 5. **Share**: *Who can see it*, when adding or editing a fit: *Private*, *Corporation*, *Link
@@ -57,7 +60,7 @@ profile can see follows its **main character's corporation**.
 6. **Send to the game**: *Send to a character* on a fit's page, or tick several fits on *My
    fittings* or the *Library* and choose *Send selected to game*. They appear in that
    character's saved fittings in game.
-7. **Fly doctrines**: *Doctrines* lists your corporation's doctrines; open one, *Select all*, and
+7. **Fly doctrines**: *Fittings → Doctrines* lists your corporation's doctrines; open one, *Select all*, and
    send its fits to a character.
 8. **Track income**: once a character allows the income tracker, *Personal income* charts its
    earnings. Filter by time range, income source and character; stack by character or source;
@@ -99,7 +102,8 @@ profile can see follows its **main character's corporation**.
   *Allow income tracker* asks for `esi-wallet.read_character_wallet.v1`; *Allow market reading*
   asks for `esi-markets.structure_markets.v1`; *Allow skills & standings* asks for
   `esi-skills.read_skills.v1` and `esi-characters.read_standings.v1`; *Allow order tracking* asks
-  for `esi-markets.read_character_orders.v1`. A character holds one
+  for `esi-markets.read_character_orders.v1`; *Allow industry tracking* asks for
+  `esi-industry.read_character_jobs.v1` and `esi-characters.read_blueprints.v1`. A character holds one
   refresh token and each grant replaces it, so a grant re-requests the features the character
   already allows (`featuresWith` in `src/lib/eve/sso.ts`). *Revoke access* drops all of them at
   once; to keep only one, revoke and grant that one again. Refresh tokens are stored AES-256-GCM
@@ -176,6 +180,18 @@ tracker; `/ratting` redirects here.)
   not), so they come off the total only. Trades between the profile's own characters are left
   out. The chart stacks, per column, the profit of items that made money above the line and the
   loss of those that lost money below it, by item category.
+- **Built items** (`src/lib/trade/fifo.ts`, the rules of eve-skills' ledger): with industry
+  tracking, the wallet sync also keeps the character's jobs (`industry_jobs`, ESI lists 90 days)
+  and every blueprint it is seen holding (`character_blueprints`, kept after a copy is used up). A
+  job takes its recipe's materials (`src/lib/industry/blueprints.json`, from the SDE with
+  `pnpm sde:blueprints`) at the blueprint's ME from the oldest stock when it starts, built
+  components included, so chains of any length are costed; its product becomes stock carrying the
+  materials, the job fee and the blueprint copy runs it used. Copying and invention cost lands on
+  the copy runs they made (failed attempts included); a T2 job takes the cost of its runs. The
+  decryptor is read off the invented copies' ME/TE. Materials with no purchase on record are
+  valued at EVE's average price and marked as estimated. Structure and rig material bonuses are not
+  reported by ESI, so structure jobs are costed without them; every such assumption is counted
+  under *What was assumed*. Cancelled jobs, research fees and work in progress are shown apart.
 - **Unsold stock**: lots left after matching, per item, with cost, value at EVE's average price
   (`/markets/prices`, cached hourly) and age; over 30 days is called out. Only market trades are
   seen, so items fitted, used, reprocessed or sold by contract stay here: *Not for trade*
@@ -324,7 +340,8 @@ CCP's JWKS) · Tailwind CSS 4 · Vitest.
 ```
 src/app/auth/{login,callback,logout}   SSO round trip and sign-out (Route Handlers)
 src/app/characters                     linked characters: main, unlink, consent (Server Actions)
-src/app/fittings, library, s/[token]   fits: mine, new/edit, detail, import, library, share links
+src/app/(fittings)/                    fits (mine, new/edit, detail, import), library, doctrines: one Fittings tab
+src/app/s/[token]                      share links
 src/lib/fittings/eft.ts                EFT parse/build/export (pure)
 src/lib/fittings/store.ts              fittings data access, permission-checked; ESI import/send
 src/lib/eve/types.ts                   type names and slot kinds, cached from ESI
@@ -334,7 +351,8 @@ src/lib/auth/session.ts                session cookie (hashed in the DB) and SSO
 src/lib/eve/{sso,esi,names}.ts         EVE SSO and ESI clients
 src/lib/permissions.ts                 who may view/edit/delete a fit, manage doctrines, read the audit log
 src/lib/income/{sync,report}.ts        wallet journal and transaction sync, and the tracker's figures
-src/lib/trade/{fifo,report}.ts         trade profit: FIFO matching of sales to purchases, unsold stock
+src/lib/trade/{fifo,report}.ts         trade profit: FIFO matching of sales to purchases and builds, unsold stock
+src/lib/trade/recipes.ts               industry recipes, ME rounding and decryptors (blueprints.json, from the SDE)
 src/lib/orders/{standing,check}.ts     open orders and where each stands in its station's book
 src/app/income, api/cron/income        personal income page; daily sync for Vercel Cron
 src/app/industry                       reprocess-or-sell calculator (Server Action + client component)
@@ -342,7 +360,7 @@ src/lib/industry/                      item list parsing, reprocessing table, yi
 src/lib/audit.ts                       audit log writes (in-transaction) and scoped reads
 src/lib/doctrines.ts                   doctrines and their fits
 src/lib/auth/super-users.ts            super user flag and the admin profile list
-src/app/admin, doctrines               super user admin page, audit log and health panel; doctrines
+src/app/admin                          super user admin page, audit log and health panel
 src/lib/{cron,health}.ts               cron run recording and schedules; health panel figures
 src/db/schema.ts                       tables; migrations in drizzle/
 ```
@@ -356,8 +374,9 @@ normal wire protocol.
    - callback URL `http://localhost:3003/auth/callback`
    - scopes `esi-fittings.read_fittings.v1`, `esi-fittings.write_fittings.v1`,
      `esi-wallet.read_character_wallet.v1`, `esi-markets.structure_markets.v1`,
-     `esi-skills.read_skills.v1`, `esi-characters.read_standings.v1` and
-     `esi-markets.read_character_orders.v1`
+     `esi-skills.read_skills.v1`, `esi-characters.read_standings.v1`,
+     `esi-markets.read_character_orders.v1`, `esi-industry.read_character_jobs.v1` and
+     `esi-characters.read_blueprints.v1`
 2. `cp .env.example .env.local`, then fill in the client id/secret, an encryption key
    (`openssl rand -base64 32`) and `ESI_CONTACT`.
 3. Run:
@@ -402,8 +421,9 @@ Preview builds skip it, so a branch can never change the production schema.
 3. Register a **production** EVE application with callback
    `https://<production domain>/auth/callback`, the two `esi-fittings` scopes,
    `esi-wallet.read_character_wallet.v1`, `esi-markets.structure_markets.v1`,
-   `esi-skills.read_skills.v1`, `esi-characters.read_standings.v1` and
-   `esi-markets.read_character_orders.v1`. EVE SSO refuses any scope the
+   `esi-skills.read_skills.v1`, `esi-characters.read_standings.v1`,
+   `esi-markets.read_character_orders.v1`, `esi-industry.read_character_jobs.v1` and
+   `esi-characters.read_blueprints.v1`. EVE SSO refuses any scope the
    application does not list.
 4. Set for Production: `APP_URL` (`https://<production domain>`), `EVE_CLIENT_ID`,
    `EVE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` (a new `openssl rand -base64 32`; never reuse the

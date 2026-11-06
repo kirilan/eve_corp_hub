@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { saveFit, type FormState } from "@/app/fittings/actions";
+import { saveFit, type FormState } from "@/app/(fittings)/fittings/actions";
 import type { Visibility } from "@/lib/fittings/store";
 import { VISIBILITY_LABEL } from "./visibility-badge";
 

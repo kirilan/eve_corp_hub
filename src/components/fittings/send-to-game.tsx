@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
-import { sendFit, type FormState } from "@/app/fittings/actions";
+import { sendFit, type FormState } from "@/app/(fittings)/fittings/actions";
 
 export function SendToGame({
   fitId,

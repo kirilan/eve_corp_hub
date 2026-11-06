@@ -293,6 +293,64 @@ export const walletTransactions = pgTable(
 );
 
 /**
+ * Industry jobs of characters that allow industry tracking, for trade performance: what a job made
+ * and from which blueprint, so a built item is costed from the materials its recipe consumed. ESI
+ * lists a character's jobs of the last 90 days; this keeps them longer. Deleted with the character.
+ */
+export const industryJobs = pgTable(
+  "industry_jobs",
+  {
+    characterId: eveId("character_id")
+      .notNull()
+      .references(() => characters.id, { onDelete: "cascade" }),
+    jobId: eveId("job_id").notNull(),
+    // ESI's activity: 1 manufacturing, 3/4 research, 5 copying, 8 invention, 9/11 reactions.
+    activityId: integer("activity_id").notNull(),
+    blueprintId: eveId("blueprint_id").notNull(),
+    blueprintTypeId: eveId("blueprint_type_id").notNull(),
+    productTypeId: eveId("product_type_id"),
+    runs: integer("runs").notNull(),
+    licensedRuns: integer("licensed_runs"),
+    // Invention only, once the job is delivered.
+    successfulRuns: integer("successful_runs"),
+    // Installation fee and facility tax.
+    cost: isk("cost"),
+    // active, paused, ready, delivered, cancelled or reverted.
+    status: text("status").notNull(),
+    facilityId: eveId("facility_id").notNull(),
+    startDate: timestamp("start_date", { withTimezone: true }).notNull(),
+    endDate: timestamp("end_date", { withTimezone: true }).notNull(),
+    completedDate: timestamp("completed_date", { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.characterId, t.jobId] })],
+);
+
+/**
+ * Blueprints a character has been seen holding, kept after they are used up: a job's materials
+ * follow its blueprint's material efficiency, and an invented copy's ME and TE tell which decryptor
+ * made it. Deleted with the character.
+ */
+export const characterBlueprints = pgTable(
+  "character_blueprints",
+  {
+    characterId: eveId("character_id")
+      .notNull()
+      .references(() => characters.id, { onDelete: "cascade" }),
+    itemId: eveId("item_id").notNull(),
+    typeId: eveId("type_id").notNull(),
+    materialEfficiency: integer("material_efficiency").notNull(),
+    timeEfficiency: integer("time_efficiency").notNull(),
+    // -1 for an original; a copy's runs left.
+    runs: integer("runs").notNull(),
+    // -1 original, -2 copy, or a stack size of originals.
+    quantity: integer("quantity").notNull(),
+    firstSeen: timestamp("first_seen", { withTimezone: true }).notNull().defaultNow(),
+    lastSeen: timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.characterId, t.itemId] })],
+);
+
+/**
  * Item types a profile keeps out of trade performance: things bought to use (a ship, its fit,
  * ammunition), not to sell, which would otherwise wait forever as unsold stock.
  */

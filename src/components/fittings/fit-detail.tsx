@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { addToDoctrine, removeFromDoctrine } from "@/app/doctrines/actions";
-import { changeVisibility, copyFit, removeFit } from "@/app/fittings/actions";
+import { addToDoctrine, removeFromDoctrine } from "@/app/(fittings)/doctrines/actions";
+import { changeVisibility, copyFit, removeFit } from "@/app/(fittings)/fittings/actions";
 import { doctrinesForFit } from "@/lib/doctrines";
 import { listCharacters, type Viewer } from "@/lib/auth/accounts";
 import { env } from "@/lib/env";

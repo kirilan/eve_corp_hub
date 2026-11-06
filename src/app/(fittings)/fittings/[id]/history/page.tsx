@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { restoreFit } from "@/app/fittings/actions";
+import { restoreFit } from "@/app/(fittings)/fittings/actions";
 import { CopyButton } from "@/components/fittings/copy-button";
 import { getViewer } from "@/lib/auth/viewer";
 import { typeNames } from "@/lib/eve/types";

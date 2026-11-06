@@ -1,12 +1,24 @@
 import "server-only";
 import { and, eq, gte, inArray, isNotNull, lt, min, sum } from "drizzle-orm";
 import { db } from "@/db";
-import { characters, tradeExclusions, walletEntries, walletTransactions } from "@/db/schema";
+import { characterBlueprints, characters, industryJobs, tradeExclusions, walletEntries, walletTransactions } from "@/db/schema";
 import { categoryNames } from "@/lib/eve/categories";
 import { averagePrices } from "@/lib/eve/prices";
 import { typesById } from "@/lib/eve/types";
 import { bucketOf, bucketsBetween, type Grouping } from "@/lib/income/report";
-import { addSale, emptyFigures, type Holding, holdings, matchTrades, type Sale, type SaleFigures, type Trade } from "./fifo";
+import {
+  addSale,
+  type BlueprintSeen,
+  emptyFigures,
+  type Holding,
+  holdings,
+  type Industry,
+  type Job,
+  matchTrades,
+  type Sale,
+  type SaleFigures,
+  type Trade,
+} from "./fifo";
 
 /**
  * Trade performance for the income page: profit per sale from the profile's market transactions
@@ -61,6 +73,8 @@ export type TradeReport = {
   categories: CategoryRow[];
   holdings: HoldingRow[];
   excluded: { typeId: number; name: string }[];
+  // Industry jobs replayed, all of the profile's: null when none are on record.
+  industry: (Industry & { jobs: number }) | null;
 };
 
 function addDays(day: string, days: number): string {
@@ -115,14 +129,18 @@ export function summarise(sales: Sale[], scope: TradeScope, categoryOf: (typeId:
   return { buckets: chart, rangeTotals, totals, items, from, to };
 }
 
-/** Every market transaction of the profile, with the sales tax on each sale, minus trades between its own characters and excluded items. */
-async function profileTrades(userId: string): Promise<{ trades: Trade[]; excluded: number[] }> {
+/**
+ * Every market transaction of the profile, with the sales tax on each sale, minus trades between its
+ * own characters; and its industry jobs and blueprints. Items kept out of trade performance stay in
+ * here: a job may still have used them, and the report leaves them out of what it shows.
+ */
+async function profileTrades(userId: string): Promise<{ trades: Trade[]; excluded: number[]; jobs: Job[]; blueprints: BlueprintSeen[] }> {
   const own = (await db.select({ id: characters.id }).from(characters).where(eq(characters.userId, userId))).map((c) => c.id);
   const excluded = (await db.select({ typeId: tradeExclusions.typeId }).from(tradeExclusions).where(eq(tradeExclusions.userId, userId))).map(
     (row) => row.typeId,
   );
-  if (own.length === 0) return { trades: [], excluded };
-  const [rows, taxes] = await Promise.all([
+  if (own.length === 0) return { trades: [], excluded, jobs: [], blueprints: [] };
+  const [rows, taxes, jobs, prints] = await Promise.all([
     db.select().from(walletTransactions).where(inArray(walletTransactions.characterId, own)),
     db
       .select({ transactionId: walletEntries.transactionId, amount: sum(walletEntries.amount).mapWith(Number) })
@@ -136,12 +154,13 @@ async function profileTrades(userId: string): Promise<{ trades: Trade[]; exclude
         ),
       )
       .groupBy(walletEntries.transactionId),
+    db.select().from(industryJobs).where(inArray(industryJobs.characterId, own)),
+    db.select().from(characterBlueprints).where(inArray(characterBlueprints.characterId, own)),
   ]);
   const taxOf = new Map(taxes.map((row) => [row.transactionId!, -row.amount]));
   const ownIds = new Set(own);
-  const skip = new Set(excluded);
   const trades = rows
-    .filter((row) => !ownIds.has(row.clientId) && !skip.has(row.typeId))
+    .filter((row) => !ownIds.has(row.clientId))
     .map((row) => ({
       characterId: row.characterId,
       transactionId: row.transactionId,
@@ -152,7 +171,8 @@ async function profileTrades(userId: string): Promise<{ trades: Trade[]; exclude
       isBuy: row.isBuy,
       tax: row.isBuy ? 0 : Math.max(0, taxOf.get(row.transactionId) ?? 0),
     }));
-  return { trades, excluded };
+  const blueprints = prints.map((b) => ({ itemId: b.itemId, typeId: b.typeId, me: b.materialEfficiency, te: b.timeEfficiency, quantity: b.quantity, firstSeen: b.firstSeen }));
+  return { trades, excluded, jobs, blueprints };
 }
 
 async function brokerFees(userId: string, characterIds: number[], from: string, to: string): Promise<number> {
@@ -182,14 +202,21 @@ async function firstTransaction(userId: string): Promise<Date | null> {
 }
 
 export async function tradeReport(userId: string, scope: TradeScope): Promise<TradeReport> {
-  const [{ trades, excluded }, trackedSince] = await Promise.all([profileTrades(userId), firstTransaction(userId)]);
-  const { sales, lots } = matchTrades(trades);
-  const shownLots = lots.filter((lot) => scope.characterIds.length === 0 || scope.characterIds.includes(lot.characterId));
+  const [{ trades, excluded, jobs, blueprints }, trackedSince, prices] = await Promise.all([
+    profileTrades(userId),
+    firstTransaction(userId),
+    averagePrices(),
+  ]);
+  const { sales, lots, industry } = matchTrades(trades, { jobs, blueprints, prices });
+  const skip = new Set(excluded);
+  const shownLots = lots.filter(
+    (lot) => !skip.has(lot.typeId) && (scope.characterIds.length === 0 || scope.characterIds.includes(lot.characterId)),
+  );
   const held = holdings(shownLots);
 
   const inRange = sales.filter((sale) => {
     const day = dayOf(sale.date);
-    return day >= scope.from && day <= scope.to;
+    return !skip.has(sale.typeId) && day >= scope.from && day <= scope.to;
   });
   const types = await typesById([...new Set([...inRange.map((s) => s.typeId), ...held.map((h) => h.typeId), ...excluded])]);
   const categoryOf = (typeId: number) => types.get(typeId)?.categoryId ?? NO_CATEGORY;
@@ -210,7 +237,6 @@ export async function tradeReport(userId: string, scope: TradeScope): Promise<Tr
     row.items++;
   }
 
-  const prices = held.length > 0 ? await averagePrices() : {};
   return {
     asOf: new Date(),
     trackedSince,
@@ -230,6 +256,7 @@ export async function tradeReport(userId: string, scope: TradeScope): Promise<Tr
       }))
       .sort((a, b) => b.cost - a.cost),
     excluded: excluded.map((typeId) => ({ typeId, name: nameOf(typeId) })).sort((a, b) => a.name.localeCompare(b.name)),
+    industry: jobs.length > 0 ? { ...industry, jobs: jobs.length } : null,
   };
 }
 

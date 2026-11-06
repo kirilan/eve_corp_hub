@@ -2,7 +2,8 @@ import Link from "next/link";
 import { type ChartSeries, IncomeChart } from "@/components/income/income-chart";
 import { formatBucket, formatIsk, formatIskExact } from "@/lib/income/format";
 import type { Filters } from "@/lib/income/report";
-import { margin, type SaleFigures } from "@/lib/trade/fifo";
+import { type Industry, margin, type Note, NOTES, type SaleFigures } from "@/lib/trade/fifo";
+import { SDE_BUILD } from "@/lib/trade/recipes";
 import { type HoldingRow, type TradeReport, tradeReport } from "@/lib/trade/report";
 import { setNotForTrade } from "./actions";
 import { Chip, hrefWith, OTHER_COLOR, PALETTE, Tile } from "./shared";
@@ -26,6 +27,80 @@ function Profit({ value, exact = false }: { value: number; exact?: boolean }) {
 function Margin({ figures }: { figures: SaleFigures }) {
   const share = margin(figures);
   return share === null ? <>–</> : <>{(share * 100).toFixed(1)}%</>;
+}
+
+/** A cost, marked when part of it is materials with no purchase on record valued at market. */
+function Cost({ cost, estimated }: { cost: number; estimated: number }) {
+  if (estimated <= 0.005 * cost) return <span title={formatIskExact(cost)}>{formatIsk(cost)}</span>;
+  return (
+    <span
+      title={`${formatIskExact(cost)}, of which ${((estimated / cost) * 100).toFixed(0)}% is materials with no purchase on record, valued at EVE's average price`}
+    >
+      {formatIsk(cost)}
+      <span className="text-amber-400">*</span>
+    </span>
+  );
+}
+
+/** Marks an item some of whose units a job of the profile built. */
+function Built({ built, of }: { built: number; of: number }) {
+  if (built <= 0) return null;
+  return (
+    <span className="ml-1.5 rounded bg-border px-1 py-px text-[10px] text-muted" title={`${units(built)} of ${units(of)} units were built from materials`}>
+      built
+    </span>
+  );
+}
+
+const NOTE_TEXT: Record<Note, (n: string) => string> = {
+  structureJobs: (n) =>
+    `${n} manufacturing or reaction jobs ran in player structures: ESI does not report their rig and structure bonuses, so their materials are costed without them (a little high).`,
+  unknownMe: (n) => `${n} jobs used a blueprint never seen in your hangars: costed at ME 0 (high).`,
+  meFromSiblings: (n) => `${n} jobs used a blueprint not seen any more: costed at the ME of your other blueprints of that type.`,
+  meAssumedInvented: (n) => `${n} T2 jobs used a copy not seen any more: costed at the ME an invented copy gets from its decryptor.`,
+  unknownDecryptor: (n) => `${n} invention jobs made copies never seen: costed with no decryptor.`,
+  ambiguousDecryptor: (n) => `${n} invention jobs could have used either of two decryptors that make the same copy: the first was assumed.`,
+  missingRecipe: (n) => `${n} jobs have no recipe in the static data (SDE build ${SDE_BUILD}): nothing was costed for them.`,
+  missingCopyRuns: (n) => `${n} blueprint copy runs were used that no copying or invention job on record made: they are costed at nothing.`,
+  unpricedUnits: (n) => `${n} units of materials with no purchase on record and no market price are costed at nothing.`,
+};
+
+/** What the industry jobs on record add up to, and what had to be assumed to cost them. */
+function IndustrySummary({ industry }: { industry: (Industry & { jobs: number }) | null }) {
+  if (!industry) {
+    return (
+      <p className="text-xs text-muted">
+        Built something? Choose <em>Allow industry tracking</em> on{" "}
+        <Link href="/characters" className="text-accent hover:underline">
+          Characters
+        </Link>{" "}
+        and what a character builds is costed from the materials that went into it, through every step of the chain.
+      </p>
+    );
+  }
+  const parts = [
+    `${units(industry.jobs)} industry job${industry.jobs === 1 ? "" : "s"} on record`,
+    industry.inProgress.jobs > 0 && `${formatIsk(industry.inProgress.cost)} in production (${industry.inProgress.jobs} job${industry.inProgress.jobs === 1 ? "" : "s"})`,
+    industry.estimated.units > 0 && `${formatIsk(industry.estimated.value)} of materials with no purchase on record, valued at market`,
+    industry.lost.jobs > 0 && `${formatIsk(industry.lost.cost)} lost in ${industry.lost.jobs} cancelled job${industry.lost.jobs === 1 ? "" : "s"}`,
+    industry.research.jobs > 0 && `${formatIsk(industry.research.cost)} of research fees`,
+  ].filter(Boolean);
+  const notes = NOTES.filter((key) => (industry.notes[key] ?? 0) > 0);
+  return (
+    <div className="space-y-1 text-xs text-muted">
+      <p>Industry: {parts.join(" · ")}.</p>
+      {notes.length > 0 && (
+        <details>
+          <summary className="cursor-pointer hover:text-foreground">What was assumed ({notes.length})</summary>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {notes.map((key) => (
+              <li key={key}>{NOTE_TEXT[key](units(industry.notes[key]!))}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
 }
 
 /** Units sold with no purchase on record, and what they sold for. */
@@ -64,15 +139,20 @@ export async function Trading({ userId, filters, from, to }: { userId: string; f
         <>
           {rangeTotals.sold > 0 && <TradeChart report={report} filters={filters} />}
           <Breakdown report={report} filters={filters} totals={totals} />
+          <IndustrySummary industry={report.industry} />
           <Unsold holdings={report.holdings} names={report.categoryNames} excluded={report.excluded} now={report.asOf.getTime()} />
         </>
       )}
       <p className="text-xs text-muted">
-        Each sale is matched to the oldest purchases of the same item on any of your characters (first in, first out).
-        Profit is what the matched units sold for, less what they cost and the sales tax on them. Units with no purchase
-        on record (loot, things you built, items bought before tracking began or moved in by contract) are counted as
-        sales but not as profit. Broker fees are charged when an order is placed or changed, so they come off the total,
-        not off any one item. Trades between your own characters are left out.
+        Each sale is matched to the oldest purchases or builds of the same item on any of your characters (first in,
+        first out). A built item costs what its job consumed (the blueprint&apos;s recipe at its material efficiency, from
+        the oldest stock of each material, built components included), the blueprint copy runs it used (with the
+        invention attempts behind them, failures included) and the job&apos;s fee. Materials with no purchase on record
+        are valued at EVE&apos;s average price and marked <span className="text-amber-400">*</span>. Profit is what the
+        matched units sold for, less what they cost and the sales tax on them. Units with no purchase or build on record
+        (loot, items bought before tracking began or moved in by contract) are counted as sales but not as profit.
+        Broker fees are charged when an order is placed or changed, so they come off the total, not off any one item.
+        Trades between your own characters are left out.
       </p>
     </section>
   );
@@ -231,6 +311,7 @@ function Breakdown({ report, filters, totals }: { report: TradeReport; filters: 
                   <tr key={row.typeId}>
                     <td className="max-w-72 truncate p-2 text-left" title={row.name}>
                       {row.name}
+                      <Built built={row.built} of={row.matched} />
                     </td>
                     <td className="p-2 text-left text-muted">{report.categoryNames[row.categoryId]}</td>
                     <FigureCells figures={row} perUnit />
@@ -263,7 +344,7 @@ function FigureCells({ figures, perUnit = false }: { figures: SaleFigures; perUn
       <td className="p-2" title={formatIskExact(figures.revenue)}>
         {formatIsk(figures.revenue)}
       </td>
-      <td className="p-2">{figures.matched > 0 ? formatIsk(figures.cost) : "–"}</td>
+      <td className="p-2">{figures.matched > 0 ? <Cost cost={figures.cost} estimated={figures.estimated} /> : "–"}</td>
       <td className="p-2">{figures.tax > 0 ? formatIsk(figures.tax) : "–"}</td>
       <td className="p-2 font-medium">{figures.matched > 0 ? <Profit value={figures.profit} /> : "–"}</td>
       <td className="p-2">
@@ -301,7 +382,7 @@ function Unsold({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-medium">Bought, not sold yet</h3>
+        <h3 className="font-medium">Bought or built, not sold yet</h3>
         {holdings.length > 0 && (
           <p className="text-sm text-muted">
             {holdings.length} item{holdings.length === 1 ? "" : "s"} · cost {formatIsk(cost)} · worth about {formatIsk(value)}
@@ -316,7 +397,7 @@ function Unsold({
         )}
       </div>
       {holdings.length === 0 ? (
-        <p className="text-sm text-muted">Everything bought in this view has sold.</p>
+        <p className="text-sm text-muted">Everything bought or built in this view has sold or went into a job.</p>
       ) : (
         <div className="max-h-96 overflow-auto rounded border border-border bg-surface">
           <table className="w-full text-right text-sm whitespace-nowrap tabular-nums">
@@ -342,12 +423,13 @@ function Unsold({
                   <tr key={h.typeId}>
                     <td className="max-w-72 truncate p-2 text-left" title={h.name}>
                       {h.name}
+                      <Built built={h.built} of={h.quantity} />
                     </td>
                     <td className="p-2 text-left text-muted">{names[h.categoryId]}</td>
                     <td className="p-2">{units(h.quantity)}</td>
                     <td className="p-2">{formatIsk(h.cost / h.quantity)}</td>
-                    <td className="p-2" title={formatIskExact(h.cost)}>
-                      {formatIsk(h.cost)}
+                    <td className="p-2">
+                      <Cost cost={h.cost} estimated={h.estimated} />
                     </td>
                     <td className="p-2">{h.value === null ? "–" : formatIsk(h.value)}</td>
                     <td className="p-2">{h.value === null ? "–" : <Profit value={h.value - h.cost} />}</td>
@@ -369,7 +451,8 @@ function Unsold({
         </div>
       )}
       <p className="text-xs text-muted">
-        Only market trades are seen: stock that was fitted, used, reprocessed, sold by contract or lost still shows here.
+        Only market trades and industry jobs are seen: stock that was fitted, used, reprocessed, sold by contract or lost
+        still shows here.
         Mark items you bought to use as <em>Not for trade</em> to leave them out of trade performance altogether.
       </p>
       {excluded.length > 0 && (
