@@ -5,7 +5,9 @@ import { fittings, pvpCrawls, pvpFits, pvpPilots } from "@/db/schema";
 import { completeSignIn, loadViewer, type Viewer } from "@/lib/auth/accounts";
 import type { TypeInfo } from "@/lib/fittings/eft";
 import { crawlPvpFits, pvpFitName } from "@/lib/pvp/crawl";
-import { copyTopPvpFit, pvpWeeks, sendTopPvpFit, topPvpFit, topPvpPilots } from "@/lib/pvp/fits";
+import { shipTraits } from "@/lib/fittings/traits";
+import { openWeeks, parseFilter, parseIsk, toggleWeekHref } from "@/lib/pvp/filter";
+import { copyTopPvpFit, pvpWeeks, searchPvpFits, sendTopPvpFit, topPvpFit, topPvpPilots } from "@/lib/pvp/fits";
 import { fitFromLoss, loadoutKey, parseRanks, type ZkillKillmail } from "@/lib/pvp/killmail";
 import { weeklyLosses, weeklyRanksPage } from "@/lib/pvp/zkill";
 import { BY_ID } from "./fixtures/types";
@@ -236,5 +238,79 @@ describe("crawlPvpFits", () => {
 
     await expect(copyTopPvpFit(viewer, 999)).rejects.toThrow(/not found/);
     expect(await topPvpFit(-1)).toBeNull();
+  });
+});
+
+describe("the week list and search URL state", () => {
+  it("reads ISK the way players write it", () => {
+    expect(parseIsk("450m")).toBe(450e6);
+    expect(parseIsk("1.2B")).toBe(1.2e9);
+    expect(parseIsk("2,5b")).toBe(2.5e9);
+    expect(parseIsk("750k")).toBe(750e3);
+    expect(parseIsk("300")).toBe(300e6);
+    expect(parseIsk("1,200,000,000")).toBe(1.2e9);
+    expect(parseIsk("1 200 000 000 ISK")).toBe(1.2e9);
+    expect(parseIsk("lots")).toBeUndefined();
+    expect(parseIsk("")).toBeUndefined();
+    expect(parseFilter({ q: "  Rifter ", min: "x", max: "1b" })).toEqual({ q: "Rifter", maxValue: 1e9 });
+    expect(parseFilter({ q: " ", week: "3" })).toEqual({});
+  });
+
+  it("opens the latest week by default and toggles weeks through the URL", () => {
+    const ids = [30, 20, 10];
+    expect(openWeeks({}, ids)).toEqual([30]);
+    expect(openWeeks({ week: "10,99,20" }, ids)).toEqual([20, 10]);
+    expect(openWeeks({ week: "none" }, ids)).toEqual([]);
+    expect(toggleWeekHref("/d", 20, [30], ids)).toBe("/d?week=30,20");
+    expect(toggleWeekHref("/d", 30, [30], ids)).toBe("/d?week=none");
+    expect(toggleWeekHref("/d", 20, [30, 20], ids)).toBe("/d");
+    expect(toggleWeekHref("/d", 30, [], ids)).toBe("/d");
+  });
+});
+
+describe("searchPvpFits", () => {
+  beforeEach(async () => {
+    await db.execute(sql`TRUNCATE users, pvp_crawls CASCADE`);
+    vi.mocked(weeklyRanksPage).mockReset();
+    vi.mocked(weeklyLosses).mockReset();
+  });
+
+  it("finds fits by ship or pilot name and ISK value across every week, newest week first", async () => {
+    vi.mocked(weeklyRanksPage).mockResolvedValue(ranksPage([101, 102]));
+    vi.mocked(weeklyLosses).mockImplementation(async (id) => (id === 101 ? [rifterLoss(13, 101)] : [rifterLoss(20, 102, { zkb: { hash: "h", totalValue: 900_000_000, npc: false } })]));
+    const older = await crawlPvpFits(undefined, new Date("2026-10-31T04:41:00Z"));
+    vi.mocked(weeklyRanksPage).mockResolvedValue(ranksPage([102]));
+    const newer = await crawlPvpFits(undefined, new Date("2026-11-07T04:41:00Z"));
+
+    const weeks = await pvpWeeks();
+    expect(weeks.map((w) => [w.id, w.fits, w.pilots])).toEqual([
+      [newer.crawlId, 1, 1],
+      [older.crawlId, 2, 2],
+    ]);
+
+    const byPilot = await searchPvpFits({ q: "pilot 102" });
+    expect(byPilot.weeks.map((w) => [w.crawl.id, w.pilots.map((p) => [p.name, p.fits.map((f) => f.killmailId)])])).toEqual([
+      [newer.crawlId, [["Pilot 102", [20]]]],
+      [older.crawlId, [["Pilot 102", [20]]]],
+    ]);
+    expect(byPilot).toMatchObject({ fits: 2, truncated: false });
+
+    // The ship's name is in the fit's name, so it matches even before the type is cached.
+    expect((await searchPvpFits({ q: "RIFTER" })).fits).toBe(3);
+    const cheap = await searchPvpFits({ maxValue: 100e6 });
+    expect(cheap.weeks.map((w) => w.pilots.map((p) => p.name))).toEqual([["Pilot 101"]]);
+    expect((await searchPvpFits({ q: "rifter", minValue: 500e6 })).fits).toBe(2);
+    // LIKE wildcards are matched literally.
+    expect((await searchPvpFits({ q: "%" })).fits).toBe(0);
+  });
+});
+
+describe("shipTraits", () => {
+  it("lists a hull's bonuses per skill, its role bonuses, and nothing for a non-ship", () => {
+    expect(shipTraits(587)?.skills).toEqual([
+      ["Minmatar Frigate", [["7.5%", "bonus to Small Projectile Turret rate of fire"], ["10%", "bonus to Small Projectile Turret falloff"]]],
+    ]);
+    expect(shipTraits(11993)?.role).toContainEqual(["", "Can fit Assault Damage Controls"]);
+    expect(shipTraits(34)).toBeNull();
   });
 });

@@ -16,7 +16,8 @@
     "super-user": "tsx --env-file-if-exists=.env.local scripts/super-user.mts",
     "vercel-build": "tsx scripts/migrate.mts --deploy && next build",
     "sde:materials": "tsx scripts/sde-materials.mts",
-    "sde:blueprints": "tsx scripts/sde-blueprints.mts"
+    "sde:blueprints": "tsx scripts/sde-blueprints.mts",
+    "sde:traits": "tsx scripts/sde-traits.mts"
   },
   "dependencies": {
     "@vercel/functions": "3.10.1",

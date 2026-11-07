@@ -65,7 +65,8 @@ profile can see follows its **main character's corporation**.
    character's saved fittings in game.
 7. **Fly doctrines**: *Fittings → Doctrines* lists your corporation's doctrines; open one, *Select all*, and
    send its fits to a character. Below them, *Top PvP pilots* lists what the best PvP pilots on
-   zKillboard lost in the latest week (pick an earlier week above the list); open a fit to *Save a copy to my fittings* or send it to a character.
+   zKillboard lost, one row per week (the latest open; click a week to open or close it). Search
+   every week by ship or pilot name and by ISK value; open a fit to *Save a copy to my fittings* or send it to a character.
 8. **Track income**: once a character allows the income tracker, *Personal income* charts its
    earnings. Filter by time range, income source and character; stack by character or source;
    turn on *Taxes & fees* to see what was charged and what you kept. Click a column for its
@@ -149,8 +150,13 @@ profile can see follows its **main character's corporation**.
 ## Top PvP fits
 
 The Doctrines tab also lists the fits of the week's top PvP pilots, read from zKillboard once a
-week and shown to everyone, signed in or not. Every week is kept and can be picked
-(`/doctrines?week=<crawl id>`); the latest shows by default.
+week and shown to everyone, signed in or not. Every week is kept, as a collapsed row with its fit
+and pilot counts; the latest is open by default. Open weeks are in the URL (`/doctrines?week=<crawl
+id>,<crawl id>`, or `week=none`), and only open weeks' fits are read, so the page stays small as weeks
+pile up. The search (`?q=&min=&max=`) runs over every week: `q` matches the ship's, the pilot's or the
+fit's name; `min`/`max` bound zKillboard's value of the loss and take ISK as players write it (`50m`,
+`1.5b`, `2,5b`; a bare number up to 10,000 is millions). It returns the newest 200 matches, grouped by
+week, and is not cached.
 
 - **Who**: the top 20 of zKillboard's 7-day killers ranking
   (`/character/ranks/k/all/weekly/1/overallRank/asc/`). zKillboard's API has no ranking endpoint,
@@ -171,6 +177,11 @@ week and shown to everyone, signed in or not. Every week is kept and can be pick
   *Save a copy to my fittings* (a private fit of their own) or send it to a character that allows
   fitting sync. Names are "<ship> (<pilot>)" within EVE's 50 characters; the description links the
   killmail. The lists are cached until the next crawl.
+
+Every fit's page (yours, the Library's and these) shows the hull's bonuses under the ship, as the
+game's Traits tab lists them: per skill level, role and misc bonuses. ESI does not serve them, so
+they come from the SDE into `src/lib/fittings/ship-traits.json`; regenerate it after a patch with
+`pnpm sde:traits <folder>` (see the script for which files it needs).
 
 ## Personal income
 

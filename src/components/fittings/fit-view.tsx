@@ -5,6 +5,7 @@ import { sectionsOf, toEft, type SlotKind } from "@/lib/fittings/eft";
 import type { FitRow } from "@/lib/fittings/store";
 import { CopyButton } from "./copy-button";
 import { typeIconUrl } from "@/lib/eve/images";
+import { shipTraits, type ShipBonus, type ShipTraits } from "@/lib/fittings/traits";
 
 const SLOT_LABEL: Record<SlotKind, string> = {
   hi: "High slots",
@@ -27,11 +28,42 @@ function ItemRow({ item, name, showQuantity }: { item: FittingItem; name: string
   );
 }
 
+function BonusList({ title, bonuses }: { title: string; bonuses: ShipBonus[] }) {
+  return (
+    <div>
+      <h4 className="text-xs text-muted">{title}</h4>
+      <ul className="mt-0.5 space-y-0.5">
+        {bonuses.map(([amount, text], i) => (
+          <li key={i} className="flex gap-2">
+            {amount && <span className="w-12 shrink-0 text-right font-mono text-accent">{amount}</span>}
+            <span className={amount ? "" : "pl-14"}>{text}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The hull's bonuses, laid out like the game's Traits tab. */
+function Traits({ traits }: { traits: ShipTraits }) {
+  return (
+    <section className="space-y-2 text-xs">
+      <h3 className="font-semibold tracking-wider text-muted uppercase">Bonuses</h3>
+      {traits.skills.map(([skill, bonuses]) => (
+        <BonusList key={skill} title={`${skill} bonuses (per skill level)`} bonuses={bonuses} />
+      ))}
+      {traits.role.length > 0 && <BonusList title="Role bonus" bonuses={traits.role} />}
+      {traits.misc.length > 0 && <BonusList title="Misc bonus" bonuses={traits.misc} />}
+    </section>
+  );
+}
+
 export async function FitView({ fit }: { fit: Pick<FitRow, "name" | "description" | "shipTypeId" | "items"> }) {
   const names = await typeNames([fit.shipTypeId, ...fit.items.map((item) => item.type_id)]);
   const name = (id: number) => names.get(id) ?? `Type ${id}`;
   const sections = sectionsOf(fit.items);
   const eft = toEft(fit, names);
+  const traits = shipTraits(fit.shipTypeId);
   const bays: [string, FittingItem[]][] = [
     ["Drones", sections.drones],
     ["Fighters", sections.fighters],
@@ -49,6 +81,7 @@ export async function FitView({ fit }: { fit: Pick<FitRow, "name" | "description
           unoptimized
           className="rounded border border-border"
         />
+        {traits && <Traits traits={traits} />}
         {fit.description && <p className="whitespace-pre-wrap text-sm text-muted">{fit.description}</p>}
       </div>
       <div className="space-y-5">
