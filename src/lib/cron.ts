@@ -87,6 +87,11 @@ export function describeSchedule(schedule: string): string {
 
 const HOUR_MS = 60 * 60 * 1000;
 
+/** A job's name on the health panel, or its path when it has none. */
+export function jobName(path: string): string {
+  return JOB_NAMES[path] ?? path;
+}
+
 /** How long a schedule may go between runs before it counts as missed. */
 function periodMs(schedule: string): number | null {
   const shape = shapeOf(schedule);
@@ -132,7 +137,7 @@ export async function cronStatus(now = new Date(), recent = 10): Promise<CronJob
       const overdue = period !== null && last !== undefined && now.getTime() - last.getTime() > period + 60 * 60 * 1000;
       return {
         path,
-        name: JOB_NAMES[path] ?? path,
+        name: jobName(path),
         schedule,
         nextRun: nextRun(schedule, now),
         runs,

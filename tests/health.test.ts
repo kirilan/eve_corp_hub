@@ -1,7 +1,9 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/db";
-import { cronRuns } from "@/db/schema";
+import { auditLog, cronRuns, users } from "@/db/schema";
+import { completeSignIn, loadViewer, type Viewer } from "@/lib/auth/accounts";
+import { CronJobError, runCronJobNow } from "@/lib/cron-jobs";
 import { cronStatus, describeSchedule, nextRun, recordCronRun, runState } from "@/lib/cron";
 import { systemHealth } from "@/lib/health";
 
@@ -10,6 +12,8 @@ vi.mock("@/lib/eve/esi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/eve/esi")>()),
   esi,
 }));
+
+vi.mock("next/cache", () => ({ cacheLife: () => {}, cacheTag: () => {}, revalidateTag: () => {} }));
 
 const JOB = "/api/cron/income";
 
@@ -105,5 +109,42 @@ describe("systemHealth", () => {
     const health = await systemHealth();
     expect(health.esi).toEqual({ ok: false, error: "ESI GET /status failed (503): Service Unavailable" });
     expect(health.database.ok).toBe(true);
+  });
+});
+
+describe("runCronJobNow", () => {
+  beforeEach(async () => {
+    await db.execute(sql`TRUNCATE users, audit_log CASCADE`);
+  });
+
+  async function profile(characterId: number, superUser: boolean): Promise<Viewer> {
+    const { userId } = await completeSignIn({
+      intent: "login",
+      currentUserId: null,
+      verified: { characterId, name: `Pilot ${characterId}`, ownerHash: `h${characterId}`, scopes: [], expiresAt: new Date() },
+      tokens: { access_token: "a", expires_in: 1199 },
+      affiliation: { character_id: characterId, corporation_id: 98000001 },
+    });
+    if (superUser) await db.update(users).set({ isSuperUser: true }).where(eq(users.id, userId));
+    return (await loadViewer(userId))!;
+  }
+
+  it("runs a job for a super user, records the run and audits who asked", async () => {
+    const admin = await profile(7001, true);
+    await expect(runCronJobNow(admin, JOB)).resolves.toEqual({ synced: 0, remaining: 0 });
+    const [run] = (await cronStatus()).find((job) => job.path === JOB)!.runs;
+    expect(run).toMatchObject({ ok: true, result: { synced: 0, remaining: 0 } });
+    const [entry] = await db.select().from(auditLog);
+    expect(entry).toMatchObject({ action: "cron.run", subjectType: "cron", subjectId: JOB, subjectName: "Wallet sync", actorId: admin.userId, corporationId: null });
+  });
+
+  it("refuses anyone but a super user, unknown jobs, and a job that is still running", async () => {
+    const member = await profile(7002, false);
+    const admin = await profile(7003, true);
+    await expect(runCronJobNow(member, JOB)).rejects.toThrow(CronJobError);
+    await expect(runCronJobNow(admin, "/api/cron/nope")).rejects.toThrow(/No job/);
+    await db.insert(cronRuns).values({ job: JOB, startedAt: new Date(Date.now() - 60_000) });
+    await expect(runCronJobNow(admin, JOB)).rejects.toThrow(/already running/);
+    expect(await db.select().from(auditLog)).toEqual([]);
   });
 });

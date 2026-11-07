@@ -19,11 +19,12 @@ export type AuditAction =
   | "user.super_granted"
   | "user.super_revoked"
   | "user.director_granted"
-  | "user.director_revoked";
+  | "user.director_revoked"
+  | "cron.run";
 
 export type AuditRecord = {
   action: AuditAction;
-  subjectType: "fitting" | "doctrine" | "user";
+  subjectType: "fitting" | "doctrine" | "user" | "cron";
   subjectId: string;
   subjectName: string;
   corporationId: number | null;

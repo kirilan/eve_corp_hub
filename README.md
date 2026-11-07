@@ -166,7 +166,7 @@ week and shown to everyone, signed in or not. Every week is kept and can be pick
   User-Agent, as zKillboard asks. Each crawl is saved as a new week in one transaction (tables
   `pvp_crawls`, `pvp_pilots`, `pvp_fits`), so a failed crawl saves nothing and shows as failed on the
   health panel. A re-run on the same UTC day replaces that day's crawl. A ranks page with no pilots
-  on it (layout changed) fails the run. A week is about 40 fits, roughly 100 KB.
+  on it (layout changed) fails the run. *Run now* on the health panel runs it at once. A week is about 40 fits, roughly 100 KB.
 - **Use**: a fit's page (`/doctrines/top/<killmail id>`, from the newest week that has it) shows it with its EFT; signed-in users can
   *Save a copy to my fittings* (a private fit of their own) or send it to a character that allows
   fitting sync. Names are "<ship> (<pilot>)" within EVE's 50 characters; the description links the
@@ -351,6 +351,11 @@ total also says what reprocessing only those items would bring. Signed-in users 
   with its last ten runs (outcome, duration, what it did or why it failed), next run, last
   success, and an *Overdue* flag when the scheduler skipped a run. Runs are recorded in
   `cron_runs` by `recordCronRun` and kept 90 days; a run with no end was killed (timeout, crash).
+  *Run now* on a job runs it at once, the same way the schedule does (same code, same 240-second
+  budget, recorded the same way), so a failed or missed run can be redone without the cron secret.
+  It is refused while the job's last run is still going, and each use is in the audit log
+  ("ran scheduled job", site-wide). A new job needs an entry in `JOBS` (`src/lib/cron-jobs.ts`),
+  a name in `JOB_NAMES` (`src/lib/cron.ts`), a route calling `runCronJob` and a `vercel.json` schedule.
   Below that: the deployment (environment, commit, region), the database (round trip, size,
   migrations applied), ESI (round trip, players online, server version, VIP mode), account,
   wallet tracking and content counts, and whether `CRON_SECRET` and `ESI_CONTACT` are set.
@@ -394,6 +399,7 @@ src/app/(fittings)/doctrines/top       a top PvP fit's page; api/cron/pvp-fits i
 src/lib/auth/super-users.ts            super user flag and the admin profile list
 src/app/admin                          super user admin page, audit log and health panel
 src/lib/{cron,health}.ts               cron run recording and schedules; health panel figures
+src/lib/cron-jobs.ts                   what each scheduled job runs, for the cron routes and Run now
 src/db/schema.ts                       tables; migrations in drizzle/
 ```
 

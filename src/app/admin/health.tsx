@@ -1,5 +1,7 @@
+import { RunJobButton } from "@/components/admin/run-job-button";
 import { type CronJobStatus, cronStatus, describeSchedule, type RunState, runState } from "@/lib/cron";
 import { type SystemHealth, systemHealth } from "@/lib/health";
+import { runJob } from "./actions";
 
 type Status = "ok" | "warn" | "fail";
 
@@ -97,6 +99,9 @@ function Job({ job, now, production }: { job: CronJobStatus; now: Date; producti
         <h3 className="font-medium">{job.name}</h3>
         <code className="text-xs text-muted">{job.path}</code>
         <Badge status={status} label={job.overdue ? "Overdue" : (lastState?.label ?? "Never run")} />
+        <div className="ml-auto">
+          <RunJobButton run={runJob.bind(null, job.path)} running={last !== undefined && runState(last, now) === "running"} />
+        </div>
       </div>
       <p className="text-sm text-muted">
         {describeSchedule(job.schedule)}
@@ -108,7 +113,7 @@ function Job({ job, now, production }: { job: CronJobStatus; now: Date; producti
       {job.runs.length === 0 ? (
         <p className="text-sm text-muted">
           No runs recorded yet.{" "}
-          {production ? "The first one comes at the next scheduled time." : "Vercel Cron only calls production deployments."}
+          {production ? "The first one comes at the next scheduled time, or use Run now." : "Vercel Cron only calls production deployments; Run now works here too."}
         </p>
       ) : (
         // A list rather than a table: on a phone the details drop to their own line instead of a sliver of a column.
@@ -249,7 +254,10 @@ export async function HealthPanel() {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-medium">System health</h2>
-      <p className="text-sm text-muted">Read when this page loads; reload for fresh figures. Only super users see this section.</p>
+      <p className="text-sm text-muted">
+        Read when this page loads; reload for fresh figures. Only super users see this section. Run now runs a job at once,
+        the same as its schedule does, and notes it in the audit log.
+      </p>
       {jobs.map((job) => (
         <Job key={job.path} job={job} now={now} production={production} />
       ))}

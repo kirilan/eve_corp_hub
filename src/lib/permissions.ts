@@ -65,6 +65,11 @@ export function canViewSystemHealth(viewer: Viewer | null): boolean {
   return viewer?.isSuperUser === true;
 }
 
+/** Running a scheduled job now, from the health panel: super users only, like the panel itself. */
+export function canRunCronJobs(viewer: Viewer | null): boolean {
+  return canViewSystemHealth(viewer);
+}
+
 /**
  * Owners delete their own fits. Admins may also take down (moderate) shared fits: fits shared with
  * a corporation they run, and public fits - any of them for super users, those whose owner's main

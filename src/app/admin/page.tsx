@@ -11,6 +11,9 @@ import { canAdminister, canGrantDirector, canGrantSuperUser, canViewSystemHealth
 import { toggleDirector, toggleSuperUser } from "./actions";
 import { HealthPanel } from "./health";
 
+// "Run now" on the health panel runs a scheduled job inside this page's Server Action: same budget as the cron routes.
+export const maxDuration = 300;
+
 // No title or heading in the static shell: to anyone but a super user this page is an ordinary 404.
 export const metadata: Metadata = {};
 
@@ -39,10 +42,11 @@ const VERB: Record<string, string> = {
   "user.super_revoked": "removed super user from",
   "user.director_granted": "made a Corp Director:",
   "user.director_revoked": "removed Corp Director from",
+  "cron.run": "ran scheduled job",
 };
 
 function subjectLink(entry: AuditEntry) {
-  if (entry.action.endsWith(".deleted") || entry.subjectType === "user") return entry.subjectName;
+  if (entry.action.endsWith(".deleted") || entry.subjectType === "user" || entry.subjectType === "cron") return entry.subjectName;
   const href = entry.subjectType === "fitting" ? `/fittings/${entry.subjectId}` : `/doctrines/${entry.subjectId}`;
   return (
     <Link href={href} prefetch={false} className="text-accent hover:underline">
