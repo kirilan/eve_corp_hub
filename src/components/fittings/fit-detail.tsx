@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { addToDoctrine, removeFromDoctrine } from "@/app/(fittings)/doctrines/actions";
-import { changeVisibility, copyFit, removeFit } from "@/app/(fittings)/fittings/actions";
+import { changeVisibility, copyFit, removeFit, sendFit } from "@/app/(fittings)/fittings/actions";
 import { doctrinesForFit } from "@/lib/doctrines";
 import { listCharacters, type Viewer } from "@/lib/auth/accounts";
 import { env } from "@/lib/env";
@@ -44,7 +44,7 @@ export async function FitDetail({ fit, viewer, shareToken }: { fit: FitRow; view
         {viewer ? (
           <div className="space-y-2">
             <h2 className="text-sm font-medium">Send to a character</h2>
-            <SendToGame fitId={fit.id} shareToken={shareToken} characters={syncable.map(({ id, name }) => ({ id, name }))} />
+            <SendToGame send={sendFit.bind(null, fit.id, shareToken)} characters={syncable.map(({ id, name }) => ({ id, name }))} />
           </div>
         ) : (
           <p className="text-sm text-muted">

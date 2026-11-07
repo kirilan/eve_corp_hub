@@ -2,18 +2,17 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
-import { sendFit, type FormState } from "@/app/(fittings)/fittings/actions";
+import type { FormState } from "@/app/(fittings)/fittings/actions";
 
+/** `send` is a Server Action already bound to the fit, e.g. `sendFit.bind(null, fitId, shareToken)`. */
 export function SendToGame({
-  fitId,
-  shareToken,
+  send,
   characters,
 }: {
-  fitId: string;
-  shareToken: string | null;
+  send: (state: FormState, form: FormData) => Promise<FormState>;
   characters: { id: number; name: string }[];
 }) {
-  const [state, action, pending] = useActionState<FormState, FormData>(sendFit.bind(null, fitId, shareToken), {});
+  const [state, action, pending] = useActionState<FormState, FormData>(send, {});
   if (characters.length === 0) {
     return (
       <p className="text-sm text-muted">

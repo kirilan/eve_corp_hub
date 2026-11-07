@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { DoctrineForm } from "@/components/doctrine-form";
+import { TopPvpFits } from "@/components/fittings/top-pvp-fits";
 import { SignInButton } from "@/components/sign-in-button";
 import { getViewer } from "@/lib/auth/viewer";
 import { listDoctrines } from "@/lib/doctrines";
@@ -11,7 +12,7 @@ import { newDoctrine } from "./actions";
 
 export const metadata: Metadata = { title: "Doctrines" };
 
-export default function DoctrinesPage() {
+export default function DoctrinesPage({ searchParams }: PageProps<"/doctrines">) {
   return (
     <div className="space-y-6">
       <div>
@@ -22,6 +23,9 @@ export default function DoctrinesPage() {
       </div>
       <Suspense fallback={<p className="text-muted">Loading…</p>}>
         <Doctrines />
+      </Suspense>
+      <Suspense fallback={<p className="text-muted">Loading top PvP fits…</p>}>
+        <TopPvpFits searchParams={searchParams} />
       </Suspense>
     </div>
   );

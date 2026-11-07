@@ -55,7 +55,7 @@ async function fitFromEft(eft: string, nameOverride: string | undefined) {
   }
 }
 
-type Contents = Pick<Fitting, "name" | "description" | "shipTypeId" | "items">;
+export type Contents = Pick<Fitting, "name" | "description" | "shipTypeId" | "items">;
 type VersionSource = "created" | "edited" | "imported" | "copied" | "restored";
 
 /** Appends the next version of a fit's contents; the caller holds the fit row (or just created it). */
@@ -267,7 +267,11 @@ export async function fittingByShareToken(viewer: Viewer | null, shareToken: str
 export async function copyFitting(viewer: Viewer, id: string, shareToken?: string): Promise<string> {
   const source = await viewableFitting(viewer, id, shareToken);
   if (!source) throw new FittingError("Fit not found.");
-  const contents = { name: source.name, description: source.description, shipTypeId: source.shipTypeId, items: source.items };
+  return saveCopy(viewer, { name: source.name, description: source.description, shipTypeId: source.shipTypeId, items: source.items });
+}
+
+/** Saves contents from anywhere the viewer may read (a shared fit, a top PvP fit) as a private fit of their own. */
+export async function saveCopy(viewer: Viewer, contents: Contents): Promise<string> {
   return db.transaction((tx) => insertFitting(tx, viewer, contents, null, "copied"));
 }
 
@@ -393,6 +397,11 @@ export async function importGameFittings(viewer: Viewer, characterId: number, fi
 export async function sendToGame(viewer: Viewer, id: string, characterId: number, shareToken?: string): Promise<void> {
   const fit = await viewableFitting(viewer, id, shareToken);
   if (!fit) throw new FittingError("Fit not found.");
+  await writeToGame(viewer, characterId, fit);
+}
+
+/** Writes contents the viewer may read to one of their own characters' saved fittings. */
+export async function writeToGame(viewer: Viewer, characterId: number, fit: Contents): Promise<void> {
   const token = await characterAccessToken(viewer.userId, characterId, "fittings");
   await esi<{ fitting_id: number }>(`/characters/${characterId}/fittings`, {
     method: "POST",

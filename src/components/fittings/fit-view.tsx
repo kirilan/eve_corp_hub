@@ -27,7 +27,7 @@ function ItemRow({ item, name, showQuantity }: { item: FittingItem; name: string
   );
 }
 
-export async function FitView({ fit }: { fit: FitRow }) {
+export async function FitView({ fit }: { fit: Pick<FitRow, "name" | "description" | "shipTypeId" | "items"> }) {
   const names = await typeNames([fit.shipTypeId, ...fit.items.map((item) => item.type_id)]);
   const name = (id: number) => names.get(id) ?? `Type ${id}`;
   const sections = sectionsOf(fit.items);

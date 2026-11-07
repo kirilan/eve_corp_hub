@@ -92,6 +92,13 @@
       "when": 1794004388359,
       "tag": "0012_industry_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794049136100,
+      "tag": "0013_pvp_fits",
+      "breakpoints": true
     }
   ]
 }

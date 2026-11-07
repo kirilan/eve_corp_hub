@@ -26,13 +26,24 @@ describe("schedules", () => {
     expect(nextRun("17 3 * * *", at("2026-10-18T03:17:00Z"))).toEqual(at("2026-10-19T03:17:00Z"));
     expect(nextRun("5 * * * *", at("2026-10-18T10:30:00Z"))).toEqual(at("2026-10-18T11:05:00Z"));
     expect(nextRun("*/5 * * * *", at("2026-10-18T10:30:00Z"))).toBeNull();
-    expect(nextRun("0 3 * * 1", at("2026-10-18T10:30:00Z"))).toBeNull();
+    expect(nextRun("0 3 * * 1-5", at("2026-10-18T10:30:00Z"))).toBeNull();
+    expect(nextRun("0 3 1 * *", at("2026-10-18T10:30:00Z"))).toBeNull();
+  });
+
+  it("finds the next weekly run", () => {
+    // 2026-10-18 is a Sunday.
+    expect(nextRun("41 4 * * 1", at("2026-10-18T10:30:00Z"))).toEqual(at("2026-10-19T04:41:00Z"));
+    expect(nextRun("41 4 * * 1", at("2026-10-19T04:41:00Z"))).toEqual(at("2026-10-26T04:41:00Z"));
+    expect(nextRun("41 4 * * 1", at("2026-10-19T04:00:00Z"))).toEqual(at("2026-10-19T04:41:00Z"));
+    expect(nextRun("0 12 * * 0", at("2026-10-18T10:30:00Z"))).toEqual(at("2026-10-18T12:00:00Z"));
+    expect(nextRun("0 12 * * 7", at("2026-10-18T13:00:00Z"))).toEqual(at("2026-10-25T12:00:00Z"));
   });
 
   it("describes them, or shows the schedule as written", () => {
     expect(describeSchedule("17 3 * * *")).toBe("Daily at 03:17 UTC");
     expect(describeSchedule("5 * * * *")).toBe("Hourly at :05");
-    expect(describeSchedule("0 3 * * 1")).toBe("0 3 * * 1");
+    expect(describeSchedule("41 4 * * 1")).toBe("Mondays at 04:41 UTC");
+    expect(describeSchedule("0 3 * * 1-5")).toBe("0 3 * * 1-5");
   });
 
   it("calls a run that never ended killed once it outlives any function", () => {

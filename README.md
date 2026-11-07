@@ -14,6 +14,9 @@ profile can see follows its **main character's corporation**.
   time or up to 50 at once.
 - **Doctrines**: corporation leaders group fits into doctrines; members send a whole doctrine to
   a character in one go.
+- **Top PvP fits**: once a week, the fits that zKillboard's top 20 PvP pilots lost in the last 7
+  days, on the Doctrines tab for everyone, with every earlier week kept. Save a copy or send one to
+  a character.
 - **Personal income**: charts what your characters earn (bounties, ESS, missions, market and
   contract sales, rewards) with the taxes and fees on it, across all your characters. Click a
   column to see where it came from. Trade performance shows which items you traded at a profit
@@ -61,7 +64,8 @@ profile can see follows its **main character's corporation**.
    fittings* or the *Library* and choose *Send selected to game*. They appear in that
    character's saved fittings in game.
 7. **Fly doctrines**: *Fittings → Doctrines* lists your corporation's doctrines; open one, *Select all*, and
-   send its fits to a character.
+   send its fits to a character. Below them, *Top PvP pilots* lists what the best PvP pilots on
+   zKillboard lost in the latest week (pick an earlier week above the list); open a fit to *Save a copy to my fittings* or send it to a character.
 8. **Track income**: once a character allows the income tracker, *Personal income* charts its
    earnings. Filter by time range, income source and character; stack by character or source;
    turn on *Taxes & fees* to see what was charged and what you kept. Click a column for its
@@ -141,6 +145,32 @@ profile can see follows its **main character's corporation**.
   My fittings shows 50 fits per page; searches cover the whole collection, and selection applies
   to the current page.
 - Type names and slots come from ESI on first sight and are cached in `eve_types`.
+
+## Top PvP fits
+
+The Doctrines tab also lists the fits of the week's top PvP pilots, read from zKillboard once a
+week and shown to everyone, signed in or not. Every week is kept and can be picked
+(`/doctrines?week=<crawl id>`); the latest shows by default.
+
+- **Who**: the top 20 of zKillboard's 7-day killers ranking
+  (`/character/ranks/k/all/weekly/1/overallRank/asc/`). zKillboard's API has no ranking endpoint,
+  so this one page is read as HTML: character ids in rank order (`parseRanks`). Names come from ESI.
+- **What**: each pilot's losses over the same 7 days from zKillboard's API
+  (`/api/losses/characterID/{id}/pastSeconds/604800/`), which returns whole killmails, so ESI is
+  not asked for them. A loss becomes a fit (`fitFromLoss`): modules in their slots, drones and
+  fighters in their bays, loaded and carried charges and nanite paste in cargo. Other cargo,
+  implants, pods, NPC kills and hulls with nothing fitted are left out. Losses with the same hull,
+  modules and drones are one fit (ammunition counts differ), kept as the latest loss, with a count.
+- **When**: Vercel Cron calls `/api/cron/pvp-fits` on Mondays at 04:41 UTC (`vercel.json`). It
+  takes about 20 seconds: one request to zKillboard at a time, a second apart, with an identifying
+  User-Agent, as zKillboard asks. Each crawl is saved as a new week in one transaction (tables
+  `pvp_crawls`, `pvp_pilots`, `pvp_fits`), so a failed crawl saves nothing and shows as failed on the
+  health panel. A re-run on the same UTC day replaces that day's crawl. A ranks page with no pilots
+  on it (layout changed) fails the run. A week is about 40 fits, roughly 100 KB.
+- **Use**: a fit's page (`/doctrines/top/<killmail id>`, from the newest week that has it) shows it with its EFT; signed-in users can
+  *Save a copy to my fittings* (a private fit of their own) or send it to a character that allows
+  fitting sync. Names are "<ship> (<pilot>)" within EVE's 50 characters; the description links the
+  killmail. The lists are cached until the next crawl.
 
 ## Personal income
 
@@ -359,6 +389,8 @@ src/app/industry                       reprocess-or-sell calculator (Server Acti
 src/lib/industry/                      item list parsing, reprocessing table, yields/taxes/fees, hub prices
 src/lib/audit.ts                       audit log writes (in-transaction) and scoped reads
 src/lib/doctrines.ts                   doctrines and their fits
+src/lib/pvp/                           top PvP fits: zKillboard client, weekly crawl, killmail-to-fit (pure)
+src/app/(fittings)/doctrines/top       a top PvP fit's page; api/cron/pvp-fits is its weekly crawl
 src/lib/auth/super-users.ts            super user flag and the admin profile list
 src/app/admin                          super user admin page, audit log and health panel
 src/lib/{cron,health}.ts               cron run recording and schedules; health panel figures
@@ -428,7 +460,7 @@ Preview builds skip it, so a branch can never change the production schema.
 4. Set for Production: `APP_URL` (`https://<production domain>`), `EVE_CLIENT_ID`,
    `EVE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` (a new `openssl rand -base64 32`; never reuse the
    dev key), `ESI_CONTACT`, and `CRON_SECRET` (`openssl rand -hex 32`; Vercel Cron sends it to
-   the daily wallet sync, which refuses calls without it).
+   the daily wallet sync and the weekly top PvP crawl, which refuse calls without it).
 5. Redeploy, and check that the build log says `migrations applied`. Log in once on the site.
    Then make yourself the first super user in Neon's **SQL Editor**, so the production
    credentials never leave Neon:

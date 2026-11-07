@@ -7,6 +7,7 @@ import vercel from "../../vercel.json";
 /** What each scheduled job is called on the health panel; the schedules themselves are in vercel.json. */
 const JOB_NAMES: Record<string, string> = {
   "/api/cron/income": "Wallet sync",
+  "/api/cron/pvp-fits": "Top PvP fits",
 };
 
 // Runs are kept this long: plenty to spot a pattern, small enough never to matter.
@@ -36,39 +37,61 @@ export async function recordCronRun<T extends Record<string, unknown>>(job: stri
 
 const field = (value: string) => (/^\d+$/.test(value) ? Number(value) : null);
 
-/**
- * When a schedule fires next, for the two shapes this app uses: daily ("M H * * *") and hourly
- * ("M * * * *"), in UTC like Vercel Cron. Null for anything else; the panel then shows it raw.
- */
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+type Shape = { kind: "hourly"; minute: number } | { kind: "daily"; minute: number; hour: number } | { kind: "weekly"; minute: number; hour: number; day: number };
+
+/** The three shapes this app uses, in UTC like Vercel Cron: hourly ("M * * * *"), daily ("M H * * *"), weekly ("M H * * D"). */
+function shapeOf(schedule: string): Shape | null {
+  const [minute, hour, dom, month, dow, ...extra] = schedule.trim().split(/\s+/);
+  const m = field(minute ?? "");
+  if (extra.length > 0 || dom !== "*" || month !== "*" || m === null || m > 59) return null;
+  if (hour === "*") return dow === "*" ? { kind: "hourly", minute: m } : null;
+  const h = field(hour ?? "");
+  if (h === null || h > 23) return null;
+  if (dow === "*") return { kind: "daily", minute: m, hour: h };
+  const d = field(dow ?? "");
+  return d === null || d > 7 ? null : { kind: "weekly", minute: m, hour: h, day: d % 7 };
+}
+
+/** When a schedule fires next, or null for a shape the panel does not understand (it then shows it raw). */
 export function nextRun(schedule: string, now: Date): Date | null {
-  const [minute, hour, ...rest] = schedule.trim().split(/\s+/);
-  if (rest.length !== 3 || rest.some((part) => part !== "*") || field(minute) === null) return null;
+  const shape = shapeOf(schedule);
+  if (!shape) return null;
   const next = new Date(now);
   next.setUTCSeconds(0, 0);
-  next.setUTCMinutes(field(minute)!);
-  if (hour === "*") {
+  next.setUTCMinutes(shape.minute);
+  if (shape.kind === "hourly") {
     if (next <= now) next.setUTCHours(next.getUTCHours() + 1);
     return next;
   }
-  if (field(hour) === null) return null;
-  next.setUTCHours(field(hour)!);
-  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+  next.setUTCHours(shape.hour);
+  if (shape.kind === "daily") {
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    return next;
+  }
+  next.setUTCDate(next.getUTCDate() + ((shape.day - next.getUTCDay() + 7) % 7));
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 7);
   return next;
 }
 
-/** "Daily at 03:17 UTC" or "Hourly at :05", or the raw schedule. */
+/** "Daily at 03:17 UTC", "Hourly at :05" or "Mondays at 04:41 UTC", or the raw schedule. */
 export function describeSchedule(schedule: string): string {
-  const [minute, hour] = schedule.trim().split(/\s+/);
-  if (nextRun(schedule, new Date()) === null) return schedule;
-  const mm = String(field(minute)).padStart(2, "0");
-  return hour === "*" ? `Hourly at :${mm}` : `Daily at ${String(field(hour)).padStart(2, "0")}:${mm} UTC`;
+  const shape = shapeOf(schedule);
+  if (!shape) return schedule;
+  const mm = String(shape.minute).padStart(2, "0");
+  if (shape.kind === "hourly") return `Hourly at :${mm}`;
+  const at = `${String(shape.hour).padStart(2, "0")}:${mm} UTC`;
+  return shape.kind === "daily" ? `Daily at ${at}` : `${DAYS[shape.day]}s at ${at}`;
 }
+
+const HOUR_MS = 60 * 60 * 1000;
 
 /** How long a schedule may go between runs before it counts as missed. */
 function periodMs(schedule: string): number | null {
-  const [, hour] = schedule.trim().split(/\s+/);
-  if (nextRun(schedule, new Date()) === null) return null;
-  return (hour === "*" ? 1 : 24) * 60 * 60 * 1000;
+  const shape = shapeOf(schedule);
+  if (!shape) return null;
+  return { hourly: 1, daily: 24, weekly: 7 * 24 }[shape.kind] * HOUR_MS;
 }
 
 export type RunState = "running" | "ok" | "failed" | "killed";

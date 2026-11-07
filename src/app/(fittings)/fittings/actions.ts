@@ -6,6 +6,7 @@ import type { Viewer } from "@/lib/auth/accounts";
 import { ConsentMissingError } from "@/lib/auth/tokens";
 import { getViewer } from "@/lib/auth/viewer";
 import { EsiError } from "@/lib/eve/esi";
+import { copyTopPvpFit, sendTopPvpFit } from "@/lib/pvp/fits";
 import {
   copyFitting,
   createFitting,
@@ -90,6 +91,22 @@ export async function sendFit(fitId: string, shareToken: string | null, _: FormS
   const characterId = Number(form.get("character"));
   try {
     await sendToGame(viewer, fitId, characterId, shareToken ?? undefined);
+  } catch (error) {
+    return { error: userMessage(error) };
+  }
+  return { ok: "Sent. It is in that character's saved fittings in game now." };
+}
+
+export async function copyTopFit(killmailId: number) {
+  const id = await copyTopPvpFit(await requireViewer(), killmailId);
+  redirect(`/fittings/${id}?notice=fit-copied`);
+}
+
+export async function sendTopFit(killmailId: number, _: FormState, form: FormData): Promise<FormState> {
+  const viewer = await requireViewer();
+  const characterId = Number(form.get("character"));
+  try {
+    await sendTopPvpFit(viewer, killmailId, characterId);
   } catch (error) {
     return { error: userMessage(error) };
   }

@@ -4,6 +4,7 @@ import {
   boolean,
   check,
   bigserial,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -459,6 +460,69 @@ export const marketHistory = pgTable(
     fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.regionId, t.typeId] })],
+);
+
+/**
+ * One weekly crawl of zKillboard's top PvP pilots (its 7-day killers ranking) and the fits they lost,
+ * from `src/lib/pvp/crawl.ts`. Every week is kept; a crawl re-run on the same UTC day replaces that
+ * day's. Public game data, shown to everyone.
+ */
+export const pvpCrawls = pgTable(
+  "pvp_crawls",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    crawledAt: timestamp("crawled_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [index("pvp_crawls_crawled_at_idx").on(t.crawledAt)],
+);
+
+/** The pilots of one crawl, as ranked that week. */
+export const pvpPilots = pgTable(
+  "pvp_pilots",
+  {
+    crawlId: bigint("crawl_id", { mode: "number" })
+      .notNull()
+      .references(() => pvpCrawls.id, { onDelete: "cascade" }),
+    characterId: eveId("character_id").notNull(),
+    rank: integer("rank").notNull(),
+    name: text("name").notNull(),
+    // From the pilot's latest loss; null when they lost nothing that week.
+    corporationId: eveId("corporation_id"),
+    allianceId: eveId("alliance_id"),
+    // Every loss in the 7 days, fitted or not (pods, shuttles, empty hulls count here but give no fit).
+    losses: integer("losses").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.crawlId, t.characterId] })],
+);
+
+/**
+ * The fits those pilots lost in the crawl's 7 days: one row per distinct loadout per pilot, kept as
+ * the most recent loss with it. Items are in the shape `fittings.items` uses, so they copy and send as-is.
+ */
+export const pvpFits = pgTable(
+  "pvp_fits",
+  {
+    crawlId: bigint("crawl_id", { mode: "number" })
+      .notNull()
+      .references(() => pvpCrawls.id, { onDelete: "cascade" }),
+    killmailId: eveId("killmail_id").notNull(),
+    characterId: eveId("character_id").notNull(),
+    shipTypeId: eveId("ship_type_id").notNull(),
+    // "<ship> (<pilot>)", within EVE's 50 characters.
+    name: text("name").notNull(),
+    items: jsonb("items").$type<FittingItem[]>().notNull(),
+    // How many of the week's losses had this loadout.
+    losses: integer("losses").notNull(),
+    lostAt: timestamp("lost_at", { withTimezone: true }).notNull(),
+    solarSystemId: eveId("solar_system_id").notNull(),
+    // zKillboard's estimate of the whole loss (hull, fit and cargo), in ISK.
+    value: real("value"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.crawlId, t.killmailId] }),
+    index("pvp_fits_killmail_idx").on(t.killmailId),
+    foreignKey({ columns: [t.crawlId, t.characterId], foreignColumns: [pvpPilots.crawlId, pvpPilots.characterId] }).onDelete("cascade"),
+  ],
 );
 
 export type User = typeof users.$inferSelect;
