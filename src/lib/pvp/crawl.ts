@@ -7,7 +7,7 @@ import { typesById } from "@/lib/eve/types";
 import { fitFromLoss, loadoutKey, parseRanks, typeIdsIn, type ZkillKillmail } from "./killmail";
 import { weeklyLosses, weeklyRanksPage, ZkillError } from "./zkill";
 
-export const TOP_PILOTS = 20;
+export const TOP_PILOTS = 50;
 
 type Pilot = Omit<typeof pvpPilots.$inferInsert, "crawlId">;
 type Fit = Omit<typeof pvpFits.$inferInsert, "crawlId">;

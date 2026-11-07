@@ -12,7 +12,7 @@ import type { ZkillKillmail } from "./killmail";
 const BASE = "https://zkillboard.com";
 const REQUEST_TIMEOUT_MS = 20_000;
 const PAUSE_MS = 1_000;
-// The API answers at most 200 killmails a page; nobody in the top 20 loses 600 ships a week.
+// The API answers at most 200 killmails a page; nobody in the top 50 loses 600 ships a week.
 const MAX_PAGES = 3;
 const PAGE_SIZE = 200;
 export const WEEK_SECONDS = 7 * 24 * 60 * 60;

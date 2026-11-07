@@ -14,7 +14,7 @@ profile can see follows its **main character's corporation**.
   time or up to 50 at once.
 - **Doctrines**: corporation leaders group fits into doctrines; members send a whole doctrine to
   a character in one go.
-- **Top PvP fits**: once a week, the fits that zKillboard's top 20 PvP pilots lost in the last 7
+- **Top PvP fits**: once a week, the fits that zKillboard's top 50 PvP pilots lost in the last 7
   days, on the Doctrines tab for everyone, with every earlier week kept. Save a copy or send one to
   a character.
 - **Personal income**: charts what your characters earn (bounties, ESS, missions, market and
@@ -158,7 +158,7 @@ fit's name; `min`/`max` bound zKillboard's value of the loss and take ISK as pla
 `1.5b`, `2,5b`; a bare number up to 10,000 is millions). It returns the newest 200 matches, grouped by
 week, and is not cached.
 
-- **Who**: the top 20 of zKillboard's 7-day killers ranking
+- **Who**: the top 50 of zKillboard's 7-day killers ranking
   (`/character/ranks/k/all/weekly/1/overallRank/asc/`). zKillboard's API has no ranking endpoint,
   so this one page is read as HTML: character ids in rank order (`parseRanks`). Names come from ESI.
 - **What**: each pilot's losses over the same 7 days from zKillboard's API
@@ -168,11 +168,11 @@ week, and is not cached.
   implants, pods, NPC kills and hulls with nothing fitted are left out. Losses with the same hull,
   modules and drones are one fit (ammunition counts differ), kept as the latest loss, with a count.
 - **When**: Vercel Cron calls `/api/cron/pvp-fits` on Mondays at 04:41 UTC (`vercel.json`). It
-  takes about 20 seconds: one request to zKillboard at a time, a second apart, with an identifying
+  takes about a minute: one request to zKillboard at a time, a second apart, with an identifying
   User-Agent, as zKillboard asks. Each crawl is saved as a new week in one transaction (tables
   `pvp_crawls`, `pvp_pilots`, `pvp_fits`), so a failed crawl saves nothing and shows as failed on the
   health panel. A re-run on the same UTC day replaces that day's crawl. A ranks page with no pilots
-  on it (layout changed) fails the run. *Run now* on the health panel runs it at once. A week is about 40 fits, roughly 100 KB.
+  on it (layout changed) fails the run. *Run now* on the health panel runs it at once. A week is about 100 fits, roughly 250 KB (about 13 MB a year).
 - **Use**: a fit's page (`/doctrines/top/<killmail id>`, from the newest week that has it) shows it with its EFT; signed-in users can
   *Save a copy to my fittings* (a private fit of their own) or send it to a character that allows
   fitting sync. Names are "<ship> (<pilot>)" within EVE's 50 characters; the description links the
