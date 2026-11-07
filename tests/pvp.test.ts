@@ -9,10 +9,16 @@ import { shipTraits } from "@/lib/fittings/traits";
 import { openWeeks, parseFilter, parseIsk, toggleWeekHref } from "@/lib/pvp/filter";
 import { copyTopPvpFit, pvpWeeks, searchPvpFits, sendTopPvpFit, topPvpFit, topPvpPilots } from "@/lib/pvp/fits";
 import { fitFromLoss, loadoutKey, parseRanks, type ZkillKillmail } from "@/lib/pvp/killmail";
-import { weeklyLosses, weeklyRanksPage } from "@/lib/pvp/zkill";
+import { parseTopShips, weeklyLosses, weeklyRanksPage, weeklyShipKills } from "@/lib/pvp/zkill";
 import { BY_ID } from "./fixtures/types";
 
-const TYPES = new Map<number, TypeInfo>([...BY_ID, [670, { id: 670, name: "Capsule", groupId: 29, categoryId: 6, slot: null }]]);
+const TYPES = new Map<number, TypeInfo>([
+  ...BY_ID,
+  [670, { id: 670, name: "Capsule", groupId: 29, categoryId: 6, slot: null }],
+  [11993, { id: 11993, name: "Cerberus", groupId: 358, categoryId: 6, slot: null }],
+  // A structure: zKillboard credits its kills like a hull's.
+  [35826, { id: 35826, name: "Azbel", groupId: 1404, categoryId: 65, slot: null }],
+]);
 
 vi.mock("next/cache", () => ({ cacheLife: () => {}, cacheTag: () => {} }));
 vi.mock("@/lib/eve/types", () => ({
@@ -22,6 +28,7 @@ vi.mock("@/lib/pvp/zkill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/pvp/zkill")>()),
   weeklyRanksPage: vi.fn(),
   weeklyLosses: vi.fn(),
+  weeklyShipKills: vi.fn(),
 }));
 vi.mock("@/lib/auth/tokens", () => ({ characterAccessToken: vi.fn(async () => "token") }));
 const esi = vi.hoisted(() => vi.fn());
@@ -152,6 +159,7 @@ describe("crawlPvpFits", () => {
     esi.mockReset();
     vi.mocked(weeklyRanksPage).mockReset();
     vi.mocked(weeklyLosses).mockReset();
+    vi.mocked(weeklyShipKills).mockReset().mockResolvedValue([]);
   });
 
   it("stores each top pilot's distinct fits as a new week, newest loss kept, earlier weeks kept", async () => {
@@ -174,7 +182,7 @@ describe("crawlPvpFits", () => {
     const lastWeek = await earlierWeek("2026-10-31T04:41:00Z");
 
     const result = await crawlPvpFits(undefined, new Date("2026-11-07T04:41:00Z"));
-    expect(result).toEqual({ crawlId: expect.any(Number), pilots: 3, fits: 3 });
+    expect(result).toEqual({ crawlId: expect.any(Number), pilots: 3, fits: 3, ships: 0 });
 
     const { crawl, pilots } = await topPvpPilots();
     expect(crawl).toEqual({ id: result.crawlId, crawledAt: "2026-11-07T04:41:00.000Z" });
@@ -273,6 +281,7 @@ describe("searchPvpFits", () => {
     await db.execute(sql`TRUNCATE users, pvp_crawls CASCADE`);
     vi.mocked(weeklyRanksPage).mockReset();
     vi.mocked(weeklyLosses).mockReset();
+    vi.mocked(weeklyShipKills).mockReset().mockResolvedValue([]);
   });
 
   it("finds fits by ship or pilot name and ISK value across every week, newest week first", async () => {
@@ -312,5 +321,67 @@ describe("shipTraits", () => {
     ]);
     expect(shipTraits(11993)?.role).toContainEqual(["", "Can fit Assault Damage Controls"]);
     expect(shipTraits(34)).toBeNull();
+  });
+});
+
+describe("kills per hull", () => {
+  it("reads zKillboard's Top Ships list, leaving out capsules and anything malformed", () => {
+    const stats = {
+      topLists: [
+        { type: "character", values: [{ kills: 854 }] },
+        {
+          type: "shipType",
+          values: [
+            { shipTypeID: 73792, kills: 643, isk: 1.028e12 },
+            { shipTypeID: 670, kills: 112, isk: 4e11 },
+            { shipTypeID: 587, kills: 7, isk: 2e8 },
+            { shipTypeID: "x", kills: 3 },
+          ],
+        },
+      ],
+    };
+    expect(parseTopShips(stats)).toEqual([
+      { shipTypeId: 73792, kills: 643, iskDestroyed: 1.028e12 },
+      { shipTypeId: 587, kills: 7, iskDestroyed: 2e8 },
+    ]);
+    expect(parseTopShips({ error: "nope" })).toEqual([]);
+    expect(parseTopShips(null)).toEqual([]);
+  });
+
+  beforeEach(async () => {
+    await db.execute(sql`TRUNCATE users, pvp_crawls CASCADE`);
+    vi.mocked(weeklyRanksPage).mockReset();
+    vi.mocked(weeklyLosses).mockReset();
+    vi.mocked(weeklyShipKills).mockReset();
+  });
+
+  it("stores what each pilot killed per hull, shows it on their fits, and filters on it", async () => {
+    vi.mocked(weeklyRanksPage).mockResolvedValue(ranksPage([101, 102]));
+    vi.mocked(weeklyLosses).mockImplementation(async (id) => (id === 101 ? [rifterLoss(13, 101)] : [rifterLoss(20, 102)]));
+    vi.mocked(weeklyShipKills).mockImplementation(async (id) =>
+      id === 101
+        ? [
+            { shipTypeId: 587, kills: 40, iskDestroyed: 3e9 },
+            { shipTypeId: 11993, kills: 12, iskDestroyed: 9e9 },
+            { shipTypeId: 35826, kills: 2, iskDestroyed: 1e8 },
+          ]
+        : [],
+    );
+    const result = await crawlPvpFits();
+    expect(result).toMatchObject({ pilots: 2, fits: 2, ships: 2 });
+
+    const { pilots } = await topPvpPilots();
+    expect(pilots[0].fits.map((f) => [f.killmailId, f.kills, f.iskDestroyed])).toEqual([[13, 40, 3e9]]);
+    // A hull killed with but never lost has no fit; it is listed apart.
+    expect(pilots[0].otherShips.map((ship) => [ship.shipTypeId, ship.kills, ship.iskDestroyed])).toEqual([[11993, 12, 9e9]]);
+    // No kills on record for the hull: unknown, not zero.
+    expect(pilots[1].fits.map((f) => f.kills)).toEqual([null]);
+    expect((await topPvpFit(13))?.kills).toBe(40);
+
+    expect(parseFilter({ kills: "20" })).toEqual({ minKills: 20 });
+    expect(parseFilter({ kills: "0" })).toEqual({});
+    const busy = await searchPvpFits({ minKills: 20 });
+    expect(busy.weeks.flatMap((w) => w.pilots.flatMap((p) => p.fits.map((f) => f.killmailId)))).toEqual([13]);
+    expect((await searchPvpFits({ minKills: 41 })).fits).toBe(0);
   });
 });

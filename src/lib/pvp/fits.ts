@@ -1,8 +1,8 @@
 import "server-only";
-import { and, asc, countDistinct, desc, eq, gte, ilike, lte, or, type SQL } from "drizzle-orm";
+import { and, asc, countDistinct, desc, eq, gte, ilike, lte, or, sql, type SQL } from "drizzle-orm";
 import { cacheLife, cacheTag } from "next/cache";
 import { db } from "@/db";
-import { eveTypes, pvpCrawls, pvpFits, pvpPilots } from "@/db/schema";
+import { eveTypes, pvpCrawls, pvpFits, pvpPilots, pvpShipKills } from "@/db/schema";
 import type { Viewer } from "@/lib/auth/accounts";
 import { FittingError, saveCopy, writeToGame, type Contents } from "@/lib/fittings/store";
 import type { PvpFilter } from "./filter";
@@ -48,7 +48,19 @@ const fitSummary = {
   losses: pvpFits.losses,
   lostAt: pvpFits.lostAt,
   value: pvpFits.value,
+  kills: pvpShipKills.kills,
+  iskDestroyed: pvpShipKills.iskDestroyed,
 };
+
+/** What the fit's pilot killed that week in the fit's hull (nothing for weeks crawled before kills were). */
+const hullKills = and(
+  eq(pvpShipKills.crawlId, pvpFits.crawlId),
+  eq(pvpShipKills.characterId, pvpFits.characterId),
+  eq(pvpShipKills.shipTypeId, pvpFits.shipTypeId),
+);
+// Within a pilot: the hulls they killed most with first, then the most-lost loadouts, then the newest.
+const fitOrder = [sql`${pvpShipKills.kills} desc nulls last`, desc(pvpFits.losses), desc(pvpFits.lostAt)];
+
 type FitSummary = {
   crawlId: number;
   killmailId: number;
@@ -58,10 +70,16 @@ type FitSummary = {
   losses: number;
   lostAt: Date;
   value: number | null;
+  kills: number | null;
+  iskDestroyed: number | null;
 };
+type HullKills = { crawlId: number; characterId: number; shipTypeId: number; shipName: string | null; kills: number; iskDestroyed: number };
 
-/** Pilots in the given order, each with their fits (already in display order), dates as ISO strings. */
-function withFits(pilots: (typeof pvpPilots.$inferSelect)[], fits: FitSummary[]) {
+/**
+ * Pilots in the given order, each with their fits (already in display order) and the hulls they killed
+ * with but lost no fit in (`otherShips`, most kills first), dates as ISO strings.
+ */
+function withFits(pilots: (typeof pvpPilots.$inferSelect)[], fits: FitSummary[], hulls: HullKills[] = []) {
   return pilots.map((pilot) => ({
     characterId: pilot.characterId,
     rank: pilot.rank,
@@ -79,12 +97,19 @@ function withFits(pilots: (typeof pvpPilots.$inferSelect)[], fits: FitSummary[])
         losses: fit.losses,
         lostAt: fit.lostAt.toISOString(),
         value: fit.value,
+        kills: fit.kills,
+        iskDestroyed: fit.iskDestroyed,
       })),
+    otherShips: hulls
+      .filter((hull) => hull.crawlId === pilot.crawlId && hull.characterId === pilot.characterId)
+      .filter((hull) => !fits.some((fit) => fit.crawlId === hull.crawlId && fit.characterId === hull.characterId && fit.shipTypeId === hull.shipTypeId))
+      .map(({ shipTypeId, shipName, kills, iskDestroyed }) => ({ shipTypeId, shipName, kills, iskDestroyed })),
   }));
 }
 
 /**
- * One week's pilots in rank order, each with their fits, most-lost first: the week with id `crawlId`,
+ * One week's pilots in rank order, each with their fits (hulls they killed most with first) and the
+ * other hulls they killed with: the week with id `crawlId`,
  * or the latest when it is not given. `crawl` is null when there is no such week. Dates are ISO
  * strings (cached values are serialized).
  */
@@ -99,16 +124,30 @@ export async function topPvpPilots(crawlId?: number) {
     .orderBy(desc(pvpCrawls.crawledAt))
     .limit(1);
   if (!crawl) return { crawl: null, pilots: [] };
-  const [pilots, fits] = await Promise.all([
+  const [pilots, fits, hulls] = await Promise.all([
     db.select().from(pvpPilots).where(eq(pvpPilots.crawlId, crawl.id)).orderBy(asc(pvpPilots.rank)),
     db
       .select(fitSummary)
       .from(pvpFits)
       .leftJoin(eveTypes, eq(eveTypes.id, pvpFits.shipTypeId))
+      .leftJoin(pvpShipKills, hullKills)
       .where(eq(pvpFits.crawlId, crawl.id))
-      .orderBy(desc(pvpFits.losses), desc(pvpFits.lostAt)),
+      .orderBy(...fitOrder),
+    db
+      .select({
+        crawlId: pvpShipKills.crawlId,
+        characterId: pvpShipKills.characterId,
+        shipTypeId: pvpShipKills.shipTypeId,
+        shipName: eveTypes.name,
+        kills: pvpShipKills.kills,
+        iskDestroyed: pvpShipKills.iskDestroyed,
+      })
+      .from(pvpShipKills)
+      .leftJoin(eveTypes, eq(eveTypes.id, pvpShipKills.shipTypeId))
+      .where(eq(pvpShipKills.crawlId, crawl.id))
+      .orderBy(desc(pvpShipKills.kills)),
   ]);
-  return { crawl: { id: crawl.id, crawledAt: crawl.crawledAt.toISOString() }, pilots: withFits(pilots, fits) };
+  return { crawl: { id: crawl.id, crawledAt: crawl.crawledAt.toISOString() }, pilots: withFits(pilots, fits, hulls) };
 }
 
 export type TopPvpPilot = Awaited<ReturnType<typeof topPvpPilots>>["pilots"][number];
@@ -118,8 +157,9 @@ export const SEARCH_LIMIT = 200;
 
 /**
  * Fits from every week that match `filter`: the ship's name, the pilot's name or the fit's name contains
- * `q` (any case), and zKillboard's value of the loss is within `minValue`..`maxValue` (a fit with no
- * value never passes an ISK bound). Grouped by week, newest first, then by pilot in rank order, only
+ * `q` (any case), zKillboard's value of the loss is within `minValue`..`maxValue` (a fit with no
+ * value never passes an ISK bound), and its pilot was on at least `minKills` kills in that hull that
+ * week (weeks crawled before kills were never pass it). Grouped by week, newest first, then by pilot in rank order, only
  * pilots with a match. Not cached: queries are open-ended.
  */
 export async function searchPvpFits(filter: PvpFilter) {
@@ -130,14 +170,16 @@ export async function searchPvpFits(filter: PvpFilter) {
   }
   if (filter.minValue !== undefined) conditions.push(gte(pvpFits.value, filter.minValue));
   if (filter.maxValue !== undefined) conditions.push(lte(pvpFits.value, filter.maxValue));
+  if (filter.minKills !== undefined) conditions.push(gte(pvpShipKills.kills, filter.minKills));
   const rows = await db
     .select({ fit: fitSummary, pilot: pvpPilots, crawledAt: pvpCrawls.crawledAt })
     .from(pvpFits)
     .innerJoin(pvpPilots, and(eq(pvpPilots.crawlId, pvpFits.crawlId), eq(pvpPilots.characterId, pvpFits.characterId)))
     .innerJoin(pvpCrawls, eq(pvpCrawls.id, pvpFits.crawlId))
     .leftJoin(eveTypes, eq(eveTypes.id, pvpFits.shipTypeId))
+    .leftJoin(pvpShipKills, hullKills)
     .where(and(...conditions))
-    .orderBy(desc(pvpCrawls.crawledAt), desc(pvpCrawls.id), asc(pvpPilots.rank), desc(pvpFits.losses), desc(pvpFits.lostAt))
+    .orderBy(desc(pvpCrawls.crawledAt), desc(pvpCrawls.id), asc(pvpPilots.rank), ...fitOrder)
     .limit(SEARCH_LIMIT + 1);
   const kept = rows.slice(0, SEARCH_LIMIT);
 
@@ -163,11 +205,12 @@ export async function topPvpFit(killmailId: number) {
   cacheLife("days");
   if (!Number.isSafeInteger(killmailId) || killmailId <= 0) return null;
   const [row] = await db
-    .select({ fit: pvpFits, pilot: pvpPilots, crawl: pvpCrawls, shipName: eveTypes.name })
+    .select({ fit: pvpFits, pilot: pvpPilots, crawl: pvpCrawls, shipName: eveTypes.name, kills: pvpShipKills.kills, iskDestroyed: pvpShipKills.iskDestroyed })
     .from(pvpFits)
     .innerJoin(pvpPilots, and(eq(pvpPilots.crawlId, pvpFits.crawlId), eq(pvpPilots.characterId, pvpFits.characterId)))
     .innerJoin(pvpCrawls, eq(pvpCrawls.id, pvpFits.crawlId))
     .leftJoin(eveTypes, eq(eveTypes.id, pvpFits.shipTypeId))
+    .leftJoin(pvpShipKills, hullKills)
     .where(eq(pvpFits.killmailId, killmailId))
     .orderBy(desc(pvpCrawls.crawledAt))
     .limit(1);
@@ -185,6 +228,9 @@ export async function topPvpFit(killmailId: number) {
     lostAt: fit.lostAt.toISOString(),
     solarSystemId: fit.solarSystemId,
     value: fit.value,
+    // What the pilot killed in this hull that week; null when unknown.
+    kills: row.kills,
+    iskDestroyed: row.iskDestroyed,
     pilot: { characterId: pilot.characterId, name: pilot.name, rank: pilot.rank, corporationId: pilot.corporationId, allianceId: pilot.allianceId },
     crawl: { id: crawl.id, crawledAt: crawl.crawledAt.toISOString() },
   };

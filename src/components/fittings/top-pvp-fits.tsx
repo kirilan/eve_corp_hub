@@ -69,6 +69,10 @@ function SearchForm({ params, filtering }: { params: Params; filtering: boolean 
         Max ISK
         <input name="max" defaultValue={value("max")} placeholder="e.g. 1.5b" inputMode="decimal" className={input} />
       </label>
+      <label className="flex w-24 flex-col gap-1 text-xs text-muted" title="Kills the pilot was on in that hull that week">
+        Min kills
+        <input name="kills" defaultValue={value("kills")} placeholder="e.g. 20" inputMode="numeric" className={input} />
+      </label>
       <button className="rounded border border-border px-3 py-1.5 text-sm hover:border-accent">Search all weeks</button>
       {filtering && (
         <Link href={PATH} scroll={false} className="px-1 py-1.5 text-sm text-accent hover:underline">
@@ -138,6 +142,7 @@ function describe(filter: PvpFilter): string {
       : filter.minValue !== undefined
         ? `at least ${formatIsk(filter.minValue)} ISK`
         : filter.maxValue !== undefined && `at most ${formatIsk(filter.maxValue)} ISK`,
+    filter.minKills !== undefined && `at least ${plural(filter.minKills, "kill")} in the hull`,
   ];
   return parts.filter(Boolean).join(", ");
 }
@@ -192,12 +197,40 @@ function PilotCard({ pilot }: { pilot: TopPvpPilot }) {
             <Link href={`/doctrines/top/${fit.killmailId}`} prefetch={false} className="flex items-center gap-3 px-4 py-2 hover:bg-white/5">
               <Image src={typeIconUrl(fit.shipTypeId, 64)} alt="" width={28} height={28} unoptimized className="rounded" />
               <span className="min-w-0 flex-1 truncate text-sm">{fit.shipName ?? `Type ${fit.shipTypeId}`}</span>
-              {fit.losses > 1 && <span className="text-xs text-muted">lost ×{fit.losses}</span>}
-              {fit.value !== null && <span className="w-16 text-right text-xs text-muted">{formatIsk(fit.value)}</span>}
+              {fit.kills !== null && <Kills kills={fit.kills} iskDestroyed={fit.iskDestroyed} />}
+              <span className="w-12 text-right text-xs text-muted" title="Times this loadout was lost that week">
+                lost ×{fit.losses}
+              </span>
+              <span className="w-12 text-right text-xs text-muted" title="zKillboard's value of the loss">
+                {fit.value !== null ? formatIsk(fit.value) : "–"}
+              </span>
             </Link>
           </li>
         ))}
       </ul>
+      {pilot.otherShips.length > 0 && (
+        <p className="border-t border-border px-4 py-2 text-xs text-muted">
+          Also killed in, never lost:{" "}
+          {pilot.otherShips.map((ship, i) => (
+            <span key={ship.shipTypeId} title={`${formatIsk(ship.iskDestroyed)} ISK destroyed`}>
+              {i > 0 && ", "}
+              {ship.shipName ?? `Type ${ship.shipTypeId}`} <span className="text-foreground">{ship.kills}</span>
+            </span>
+          ))}
+        </p>
+      )}
     </div>
+  );
+}
+
+/** Kills the pilot was on in this hull that week, per zKillboard. */
+function Kills({ kills, iskDestroyed }: { kills: number; iskDestroyed: number | null }) {
+  return (
+    <span
+      className="w-16 text-right text-xs font-medium text-accent"
+      title={`On ${plural(kills, "kill")} in this hull that week${iskDestroyed !== null ? `, ${formatIsk(iskDestroyed)} ISK destroyed` : ""} (zKillboard)`}
+    >
+      {plural(kills, "kill")}
+    </span>
   );
 }

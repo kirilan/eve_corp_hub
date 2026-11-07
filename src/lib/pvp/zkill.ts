@@ -54,3 +54,34 @@ export async function weeklyLosses(characterId: number, signal?: AbortSignal): P
   }
   return out;
 }
+
+export type ShipKills = { shipTypeId: number; kills: number; iskDestroyed: number };
+
+// Kills flown in a capsule are smartbombs, bubbles and the like: no hull to credit them to.
+const CAPSULES = new Set([670, 33328]);
+
+/**
+ * The "Top Ships" list from a character's zKillboard stats: kills (killmails they were on) and the ISK
+ * destroyed per hull flown, over the same recent 7 days as the weekly ranking. zKillboard keeps the
+ * best few hulls (about ten). An answer without the list gives none rather than failing the crawl.
+ */
+export function parseTopShips(stats: unknown): ShipKills[] {
+  const lists = (stats as { topLists?: unknown } | null)?.topLists;
+  if (!Array.isArray(lists)) return [];
+  const ships = lists.find((list) => (list as { type?: unknown })?.type === "shipType") as { values?: unknown } | undefined;
+  if (!Array.isArray(ships?.values)) return [];
+  const out = new Map<number, ShipKills>();
+  for (const value of ships.values as { shipTypeID?: unknown; kills?: unknown; isk?: unknown }[]) {
+    const shipTypeId = Number(value?.shipTypeID);
+    const kills = Number(value?.kills);
+    if (!Number.isSafeInteger(shipTypeId) || shipTypeId <= 0 || CAPSULES.has(shipTypeId) || !Number.isSafeInteger(kills) || kills <= 0) continue;
+    if (!out.has(shipTypeId)) out.set(shipTypeId, { shipTypeId, kills, iskDestroyed: Number(value.isk) || 0 });
+  }
+  return [...out.values()];
+}
+
+/** What a character killed in each hull over the last 7 days, from their zKillboard stats. */
+export async function weeklyShipKills(characterId: number, signal?: AbortSignal): Promise<ShipKills[]> {
+  const path = `/api/stats/characterID/${characterId}/`;
+  return parseTopShips(await (await get(path, "application/json", signal)).json().catch(() => null));
+}

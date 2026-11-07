@@ -39,6 +39,13 @@ async function TopPvpFit({ params }: { params: PageProps<"/doctrines/top/[killma
           </a>{" "}
           (#{fit.pilot.rank} that week) on {fit.lostAt.slice(0, 10)}
           {fit.losses > 1 && <>, {fit.losses} times that week</>}
+          {fit.kills !== null && (
+            <>
+              {" "}
+              · on {fit.kills} kill{fit.kills === 1 ? "" : "s"} in this hull that week
+              {fit.iskDestroyed !== null && <> ({formatIsk(fit.iskDestroyed)} ISK destroyed)</>}
+            </>
+          )}
           {fit.value !== null && <> · {formatIsk(fit.value)} ISK</>} ·{" "}
           <a href={zkillKillUrl(fit.killmailId)} target="_blank" rel="noreferrer" className="text-accent hover:underline">
             killmail on zKillboard

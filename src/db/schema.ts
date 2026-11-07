@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  doublePrecision,
   bigserial,
   foreignKey,
   index,
@@ -521,6 +522,26 @@ export const pvpFits = pgTable(
   (t) => [
     primaryKey({ columns: [t.crawlId, t.killmailId] }),
     index("pvp_fits_killmail_idx").on(t.killmailId),
+    foreignKey({ columns: [t.crawlId, t.characterId], foreignColumns: [pvpPilots.crawlId, pvpPilots.characterId] }).onDelete("cascade"),
+  ],
+);
+
+/**
+ * What each of a crawl's pilots killed that week, per hull flown: zKillboard's "Top Ships" for the
+ * pilot (killmails they were on, not only final blows), so it covers hulls they never lost too.
+ */
+export const pvpShipKills = pgTable(
+  "pvp_ship_kills",
+  {
+    crawlId: bigint("crawl_id", { mode: "number" }).notNull(),
+    characterId: eveId("character_id").notNull(),
+    shipTypeId: eveId("ship_type_id").notNull(),
+    kills: integer("kills").notNull(),
+    // zKillboard's value of what those kills destroyed, in ISK.
+    iskDestroyed: doublePrecision("isk_destroyed").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.crawlId, t.characterId, t.shipTypeId] }),
     foreignKey({ columns: [t.crawlId, t.characterId], foreignColumns: [pvpPilots.crawlId, pvpPilots.characterId] }).onDelete("cascade"),
   ],
 );

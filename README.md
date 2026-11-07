@@ -66,7 +66,7 @@ profile can see follows its **main character's corporation**.
 7. **Fly doctrines**: *Fittings → Doctrines* lists your corporation's doctrines; open one, *Select all*, and
    send its fits to a character. Below them, *Top PvP pilots* lists what the best PvP pilots on
    zKillboard lost, one row per week (the latest open; click a week to open or close it). Search
-   every week by ship or pilot name and by ISK value; open a fit to *Save a copy to my fittings* or send it to a character.
+   every week by ship or pilot name, by ISK value and by kills in the hull; open a fit to *Save a copy to my fittings* or send it to a character.
 8. **Track income**: once a character allows the income tracker, *Personal income* charts its
    earnings. Filter by time range, income source and character; stack by character or source;
    turn on *Taxes & fees* to see what was charged and what you kept. Click a column for its
@@ -153,9 +153,10 @@ The Doctrines tab also lists the fits of the week's top PvP pilots, read from zK
 week and shown to everyone, signed in or not. Every week is kept, as a collapsed row with its fit
 and pilot counts; the latest is open by default. Open weeks are in the URL (`/doctrines?week=<crawl
 id>,<crawl id>`, or `week=none`), and only open weeks' fits are read, so the page stays small as weeks
-pile up. The search (`?q=&min=&max=`) runs over every week: `q` matches the ship's, the pilot's or the
+pile up. The search (`?q=&min=&max=&kills=`) runs over every week: `q` matches the ship's, the pilot's or the
 fit's name; `min`/`max` bound zKillboard's value of the loss and take ISK as players write it (`50m`,
-`1.5b`, `2,5b`; a bare number up to 10,000 is millions). It returns the newest 200 matches, grouped by
+`1.5b`, `2,5b`; a bare number up to 10,000 is millions); `kills` keeps fits whose pilot was on at
+least that many kills in the hull that week. It returns the newest 200 matches, grouped by
 week, and is not cached.
 
 - **Who**: the top 50 of zKillboard's 7-day killers ranking
@@ -167,8 +168,14 @@ week, and is not cached.
   fighters in their bays, loaded and carried charges and nanite paste in cargo. Other cargo,
   implants, pods, NPC kills and hulls with nothing fitted are left out. Losses with the same hull,
   modules and drones are one fit (ammunition counts differ), kept as the latest loss, with a count.
+- **Kills**: each pilot's zKillboard stats (`/api/stats/characterID/{id}/`, one request) carry a "Top
+  Ships" list for the same recent 7 days: per hull flown, the killmails they were on (not only final
+  blows) and the ISK destroyed. Stored per pilot and hull (`pvp_ship_kills`); capsules and structures
+  are left out, and zKillboard lists only about the best ten hulls. A fit shows its pilot's kills in
+  its hull, so two loadouts of the same hull show the same count; fits sort by it within a pilot, and
+  hulls killed with but never lost are listed under the pilot. Weeks crawled before this have none.
 - **When**: Vercel Cron calls `/api/cron/pvp-fits` on Mondays at 04:41 UTC (`vercel.json`). It
-  takes about a minute: one request to zKillboard at a time, a second apart, with an identifying
+  takes about two minutes: one request to zKillboard at a time, a second apart, with an identifying
   User-Agent, as zKillboard asks. Each crawl is saved as a new week in one transaction (tables
   `pvp_crawls`, `pvp_pilots`, `pvp_fits`), so a failed crawl saves nothing and shows as failed on the
   health panel. A re-run on the same UTC day replaces that day's crawl. A ranks page with no pilots

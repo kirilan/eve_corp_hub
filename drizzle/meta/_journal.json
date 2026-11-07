@@ -99,6 +99,13 @@
       "when": 1794049136100,
       "tag": "0013_pvp_fits",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794081696355,
+      "tag": "0014_pvp_ship_kills",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,7 @@
  * it runs on the server and in tests alike.
  */
 
-export type PvpFilter = { q?: string; minValue?: number; maxValue?: number };
+export type PvpFilter = { q?: string; minValue?: number; maxValue?: number; minKills?: number };
 
 type Params = Record<string, string | string[] | undefined>;
 
@@ -25,20 +25,23 @@ export function parseIsk(input: string | undefined): number | undefined {
   return number * scale;
 }
 
-/** The search from `?q=&min=&max=`; empty when none of them is set to something usable. */
+/** The search from `?q=&min=&max=&kills=`; empty when none of them is set to something usable. */
 export function parseFilter(params: Params): PvpFilter {
   const q = one(params.q)?.trim().slice(0, 100) || undefined;
   const minValue = parseIsk(one(params.min));
   const maxValue = parseIsk(one(params.max));
+  const kills = one(params.kills)?.trim();
+  const minKills = kills && /^\d{1,6}$/.test(kills) && Number(kills) > 0 ? Number(kills) : undefined;
   return {
     ...(q && { q }),
     ...(minValue !== undefined && { minValue }),
     ...(maxValue !== undefined && { maxValue }),
+    ...(minKills !== undefined && { minKills }),
   };
 }
 
 export function isFiltering(filter: PvpFilter): boolean {
-  return filter.q !== undefined || filter.minValue !== undefined || filter.maxValue !== undefined;
+  return filter.q !== undefined || filter.minValue !== undefined || filter.maxValue !== undefined || filter.minKills !== undefined;
 }
 
 /**
