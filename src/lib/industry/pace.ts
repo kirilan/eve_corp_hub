@@ -102,7 +102,11 @@ export type TimeSummary = {
   value: number;
 };
 
-/** What each column sells, per type: the items as they are, or the materials plus what is not reprocessed. */
+/**
+ * What each column sells, per type: the items as they are, or the materials plus what is not
+ * reprocessed. Like the cards' totals, units short of a whole portion count as their share of its
+ * materials (`proRataUnits`), not as items sold as they are.
+ */
 export function columnPiles(result: Result): Record<ColumnKey, Map<number, number>> {
   const pile = () => new Map<number, number>();
   const piles = { asIs: pile(), ...Object.fromEntries(OPTIONS.map((option) => [option.key, pile()])) } as Record<ColumnKey, Map<number, number>>;
@@ -111,9 +115,9 @@ export function columnPiles(result: Result): Record<ColumnKey, Map<number, numbe
   };
   for (const row of result.items) {
     add("asIs", row.typeId, row.quantity);
-    for (const option of OPTIONS) add(option.key, row.typeId, row.reprocessable ? row.leftover : row.quantity);
+    if (!row.reprocessable) for (const option of OPTIONS) add(option.key, row.typeId, row.quantity);
   }
-  for (const material of result.materials) for (const option of OPTIONS) add(option.key, material.typeId, material.units[option.key]);
+  for (const material of result.materials) for (const option of OPTIONS) add(option.key, material.typeId, material.proRataUnits[option.key]);
   return piles;
 }
 

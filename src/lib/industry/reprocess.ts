@@ -156,6 +156,10 @@ export type MaterialRow = {
   topPrice: number | null;
   unpriced: boolean;
   partial: boolean;
+  // As `units` and `value`, adding the fractions of a unit the items short of a whole portion would
+  // yield if EVE reprocessed part portions (see `ItemRow.proRata`). Equal to them when nothing is left over.
+  proRataUnits: Record<OptionKey, number>;
+  proRataValue: Record<OptionKey, number>;
 };
 
 export type Result = {
@@ -167,8 +171,8 @@ export type Result = {
     options: Record<OptionKey, number>;
     // Each item whichever way pays more: reprocessed where that beats selling it as it is.
     mixed: Record<OptionKey, number>;
-    // As `options`, counting units short of a portion pro rata (see `ItemRow.proRata`).
-    proRata: Record<OptionKey, number>;
+    // The same three, counting units short of a portion pro rata (see `ItemRow.proRata`).
+    proRata: { options: Record<OptionKey, number>; mixed: Record<OptionKey, number>; fees: Record<OptionKey, number> };
     // Value of items that cannot be reprocessed, in every total as sold as they are.
     notReprocessable: number;
     // What sales tax and broker fees took, per column.
@@ -188,25 +192,35 @@ export function appraise(appraisal: Appraisal, pricing: Pricing, yields: Record<
 
   // Materials are sold together, so each one's price is the average its whole pile fetches.
   const stacks = byOption((key) => items.map((item) => reprocessStack(item, yields[key], pricing.reprocessingTax)));
+  // What the units short of a portion would add, pro rata, per item and option.
+  const shares = byOption((key) => items.map((item, i) => leftoverShare(item, stacks[key][i].leftover, yields[key], pricing.reprocessingTax)));
   const materialIds: number[] = [];
   const units = new Map<number, Record<OptionKey, number>>();
-  for (const option of OPTIONS) {
-    for (const stack of stacks[option.key]) {
-      for (const [typeId, n] of stack.materials) {
-        if (!units.has(typeId)) {
-          units.set(typeId, byOption(() => 0));
-          materialIds.push(typeId);
-        }
-        units.get(typeId)![option.key] += n;
-      }
+  const extra = new Map<number, Record<OptionKey, number>>();
+  const add = (into: Map<number, Record<OptionKey, number>>, key: OptionKey, typeId: number, n: number) => {
+    if (!units.has(typeId)) {
+      units.set(typeId, byOption(() => 0));
+      extra.set(typeId, byOption(() => 0));
+      materialIds.push(typeId);
     }
+    into.get(typeId)![key] += n;
+  };
+  for (const option of OPTIONS) {
+    for (const stack of stacks[option.key]) for (const [typeId, n] of stack.materials) add(units, option.key, typeId, n);
+  }
+  for (const option of OPTIONS) {
+    for (const share of shares[option.key]) for (const [typeId, n] of share) if (n > 0) add(extra, option.key, typeId, n);
   }
   const sales = new Map(materialIds.map((typeId) => [typeId, byOption((key) => saleValue(books[typeId], units.get(typeId)![key], pricing.basis))]));
   const unitPrice = new Map(
     materialIds.map((typeId) => [typeId, byOption((key) => (units.get(typeId)![key] > 0 ? sales.get(typeId)![key].value / units.get(typeId)![key] : 0))]),
   );
+  // A pro-rata share is priced like the pile it would join; with no pile, at the best order.
+  const shareOf = (typeId: number, key: OptionKey) => unitPrice.get(typeId)?.[key] || (topPrice(books[typeId], pricing.basis) ?? 0);
+
   const materials: MaterialRow[] = materialIds.map((typeId) => {
     const perOption = units.get(typeId)!;
+    const more = extra.get(typeId)!;
     const sale = sales.get(typeId)!;
     return {
       typeId,
@@ -215,13 +229,12 @@ export function appraise(appraisal: Appraisal, pricing: Pricing, yields: Record<
       value: byOption((key) => sale[key].value * kept),
       unitPrice: byOption((key) => (sale[key].sold > 0 ? sale[key].value / sale[key].sold : null)),
       topPrice: topPrice(books[typeId], pricing.basis),
-      unpriced: OPTIONS.some((o) => perOption[o.key] > 0 && sale[o.key].sold === 0),
+      unpriced: OPTIONS.some((o) => (perOption[o.key] > 0 && sale[o.key].sold === 0) || (more[o.key] > 0 && shareOf(typeId, o.key) === 0)),
       partial: OPTIONS.some((o) => sale[o.key].sold > 0 && sale[o.key].sold < perOption[o.key]),
+      proRataUnits: byOption((key) => perOption[key] + more[key]),
+      proRataValue: byOption((key) => (sale[key].value + more[key] * shareOf(typeId, key)) * kept),
     };
   });
-
-  // A pro-rata share is priced like the pile it would join; with no pile, at the best order.
-  const shareOf = (typeId: number, key: OptionKey) => unitPrice.get(typeId)?.[key] || (topPrice(books[typeId], pricing.basis) ?? 0);
 
   const grossRows = items.map((item, i) => {
     const materialValue = (key: OptionKey) => {
@@ -235,7 +248,7 @@ export function appraise(appraisal: Appraisal, pricing: Pricing, yields: Record<
       leftover > 0
         ? byOption((key) => {
             let value = materialValue(key);
-            for (const [typeId, n] of leftoverShare(item, leftover, yields[key], pricing.reprocessingTax)) value += n * shareOf(typeId, key);
+            for (const [typeId, n] of shares[key][i]) value += n * shareOf(typeId, key);
             return value;
           })
         : null;
@@ -268,12 +281,20 @@ export function appraise(appraisal: Appraisal, pricing: Pricing, yields: Record<
     asIs: sum((row) => row.asIs),
     options: byOption((key) => sum((row) => row.options[key])),
     mixed: byOption((key) => sum((row) => Math.max(row.asIs, row.options[key]))),
-    proRata: byOption((key) => sum((row) => (row.proRata ?? row.options)[key])),
     notReprocessable: sum((row) => (row.reprocessable ? 0 : row.asIs)),
   };
+  const proRata = byOption((key) => sum((row) => (row.proRata ?? row.options)[key]));
   return {
     items: rows,
     materials,
-    totals: { ...totals, fees: { asIs: fee(totals.asIs), options: byOption((key) => fee(totals.options[key])) } },
+    totals: {
+      ...totals,
+      proRata: {
+        options: proRata,
+        mixed: byOption((key) => sum((row) => Math.max(row.asIs, (row.proRata ?? row.options)[key]))),
+        fees: byOption((key) => fee(proRata[key])),
+      },
+      fees: { asIs: fee(totals.asIs), options: byOption((key) => fee(totals.options[key])) },
+    },
   };
 }

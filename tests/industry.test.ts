@@ -330,7 +330,11 @@ describe("appraise", () => {
       asIs: 5_001_000,
       options: { base: 5_000_000 + emp.options.base, skills: 5_000_000 + emp.options.skills },
       mixed: { base: 5_000_000 + emp.options.base, skills: 5_000_000 + emp.options.skills },
-      proRata: { base: 5_000_000 + emp.options.base, skills: 5_000_000 + emp.options.skills },
+      proRata: {
+        options: { base: 5_000_000 + emp.options.base, skills: 5_000_000 + emp.options.skills },
+        mixed: { base: 5_000_000 + emp.options.base, skills: 5_000_000 + emp.options.skills },
+        fees: { base: 0, skills: 0 },
+      },
       notReprocessable: 5_000_000,
       fees: { asIs: 0, options: { base: 0, skills: 0 } },
     });
@@ -394,18 +398,29 @@ describe("appraise", () => {
     // The whole portion as before, plus half a portion's materials at 50%, in fractions: 51 Tritanium, 4.25 Pyerite, 0.25 Nocxium.
     expect(row.proRata!.base).toBeCloseTo(102 * 4 + 8 * 10 + 51 * 4 + 4.25 * 10 + 0.25 * 800, 6);
     expect(row.options.base).toBe(102 * 4 + 8 * 10 + 50 * 1);
-    expect(result.totals.proRata.base).toBeCloseTo(row.proRata!.base, 6);
+    expect(result.totals.proRata.options.base).toBeCloseTo(row.proRata!.base, 6);
     expect(result.totals.options.base).toBe(row.options.base);
+    // The materials table carries both: whole portions, and with the part portion's share added.
+    const tritanium = result.materials.find((m) => m.typeId === 34)!;
+    expect(tritanium).toMatchObject({ units: { base: 102 }, proRataUnits: { base: 153 }, value: { base: 408 }, proRataValue: { base: 612 } });
+    // The whole portion's half a Nocxium rounds down to none, as in EVE; only the part portion's share is fractional.
+    expect(result.materials.find((m) => m.typeId === 38)!.proRataUnits.base).toBeCloseTo(0.25, 9);
 
     const whole = appraise(appraisal([{ ...items[0], quantity: 1000 }], books), noFees(), BASE_55);
     expect(whole.items[0].proRata).toBeNull();
-    expect(whole.totals.proRata).toEqual(whole.totals.options);
+    expect(whole.totals.proRata.options).toEqual(whole.totals.options);
+    for (const m of whole.materials) expect([m.proRataUnits, m.proRataValue]).toEqual([m.units, m.value]);
   });
 
-  it("prices a stack below one batch pro rata at the best order, with no materials to sell", () => {
+  it("prices a stack below one batch pro rata at the best order, though whole batches give no materials", () => {
     const items: AppraisalItem[] = [{ typeId: 185, name: "EMP S", quantity: 50, reprocess: reprocessing(185) }];
     const result = appraise(appraisal(items, books), noFees(), BASE_55);
-    expect(result.materials).toEqual([]);
+    expect(result.materials.map((m) => [m.name, m.units.base, m.proRataUnits.base])).toEqual([
+      ["Tritanium", 0, 51],
+      ["Pyerite", 0, 4.25],
+      ["Nocxium", 0, 0.25],
+    ]);
+    expect(result.materials.every((m) => !m.unpriced)).toBe(true);
     expect(result.items[0]).toMatchObject({ leftover: 50, options: { base: 50, skills: 50 } });
     expect(result.items[0].proRata!.base).toBeCloseTo(51 * 4 + 4.25 * 10 + 0.25 * 800, 6);
   });

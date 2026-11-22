@@ -489,12 +489,6 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
       <OptionCards result={result} priced={appraisal.pricesAvailable} hint={hint} times={times} basis={basis} />
       <ItemTable rows={result.items} oreSkillNames={appraisal.oreSkillNames} basis={basis} timeOf={timeOf} />
       <MaterialTable result={result} timeOf={timeOf} basis={basis} />
-      {result.materials.length === 0 && result.items.some((row) => row.proRata) && (
-        <p className="rounded border border-border bg-surface px-3 py-2 text-sm text-muted">
-          No materials: nothing here makes up a full batch, and EVE reprocesses whole batches only. The pro-rata figures show what a batch
-          would be worth.
-        </p>
-      )}
 
       {appraisal.unknown.length > 0 && (
         <details className="rounded border border-border bg-surface p-4 text-sm">
@@ -523,8 +517,9 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
         <li>Ore and ice reprocess on Reprocessing, Reprocessing Efficiency, their own processing skill and an implant, not Scrapmetal Processing.</li>
         <li>
           Items reprocess in whole batches only (cap boosters in 10s, most ammunition in 100s, T2 ammunition in 5,000s); units short of a
-          batch are counted as sold as they are. The <em>pro rata</em> figures under them value those units at their share of a batch&apos;s
-          materials, to show what they would be worth reprocessed once you have a full batch. EVE will not pay that for a part batch.
+          batch are sold as they are. The totals at the top, the materials table and the <em>pro rata</em> figures in the item table count
+          those units as their share of a batch&apos;s materials instead, to show what they are worth reprocessed once you have a full batch;
+          EVE gives nothing for a part batch, and <em>whole batches only</em> is what it gives now.
         </li>
         <li>
           Time to sell goes by the last 30 days of trades in {hub.regionName}, from EVE&apos;s daily market history (kept per region, not per
@@ -555,15 +550,17 @@ function OptionCards({
   basis: Basis;
 }) {
   const { totals } = result;
-  const value = (key: Column["key"]) => (key === "asIs" ? totals.asIs : totals.options[key]);
-  const fees = (key: Column["key"]) => (key === "asIs" ? totals.fees.asIs : totals.fees.options[key]);
+  // The headline counts part batches pro rata; what whole batches alone give sits under it.
+  const value = (key: Column["key"]) => (key === "asIs" ? totals.asIs : totals.proRata.options[key]);
+  const fees = (key: Column["key"]) => (key === "asIs" ? totals.fees.asIs : totals.proRata.fees[key]);
   const best = priced ? COLUMNS.reduce((a, b) => (value(b.key) > value(a.key) ? b : a)).key : null;
   return (
     <ul className="grid gap-3 sm:grid-cols-3">
       {COLUMNS.map((column) => {
         const total = value(column.key);
         const delta = total - totals.asIs;
-        const mixed = column.key === "asIs" ? 0 : totals.mixed[column.key];
+        const mixed = column.key === "asIs" ? 0 : totals.proRata.mixed[column.key];
+        const whole = column.key === "asIs" ? total : totals.options[column.key];
         return (
           <li key={column.key} className={`space-y-2 rounded border bg-surface p-4 ${best === column.key ? "border-accent" : "border-border"}`}>
             <div className="flex items-start justify-between gap-2">
@@ -584,7 +581,15 @@ function OptionCards({
             </p>
             {priced && (
               <p className="text-xs text-muted">
-                After <Isk value={fees(column.key)} /> of sales tax and fees
+                After <Isk value={fees(column.key)} /> of sales tax and fees{whole !== total && ", part batches pro rata"}
+              </p>
+            )}
+            {priced && Math.abs(whole - total) > 0.5 && (
+              <p
+                className="text-xs text-muted"
+                title="EVE reprocesses whole batches only: this is what it gives now, with the units short of a batch sold as they are."
+              >
+                Whole batches only: <Isk value={whole} />
               </p>
             )}
             {priced && <TimeNote time={times[column.key]} basis={basis} total={total} />}
@@ -600,11 +605,6 @@ function OptionCards({
                   </p>
                 )}
               </>
-            )}
-            {priced && column.key !== "asIs" && Math.abs(totals.proRata[column.key] - total) > 0.5 && (
-              <p className="text-sm text-muted" title="Counting units short of a whole batch as their share of its materials. EVE reprocesses whole batches only.">
-                Part batches pro rata: <Isk value={totals.proRata[column.key]} className="text-foreground" />
-              </p>
             )}
             {priced && column.key === "asIs" && totals.notReprocessable > 0 && (
               <p className="text-sm text-muted">
@@ -780,12 +780,24 @@ function ItemTable({ rows, oreSkillNames, basis, timeOf }: { rows: ItemRow[]; or
   );
 }
 
+/** A material count, with fractions of a unit where a pro-rata share leaves some. */
+const amount = (n: number) => (Number.isInteger(n) ? units(n) : n.toLocaleString("en-US", { maximumFractionDigits: n < 10 ? 2 : 1 }));
+
 function MaterialTable({ result, timeOf, basis }: { result: Result; timeOf: TimeOf; basis: Basis }) {
   if (result.materials.length === 0) return null;
-  const sorted = [...result.materials].sort((a, b) => b.value.skills - a.value.skills);
+  const sorted = [...result.materials].sort((a, b) => b.proRataValue.skills - a.proRataValue.skills);
+  const proRata = sorted.some((row) => OPTIONS.some((o) => row.proRataUnits[o.key] !== row.units[o.key]));
+  const noWhole = sorted.every((row) => OPTIONS.every((o) => row.units[o.key] === 0));
   return (
     <div className="space-y-2">
-      <h3 className="font-medium">Materials from reprocessing everything</h3>
+      <h3 className="font-medium">Materials from reprocessing everything{proRata && ", part batches pro rata"}</h3>
+      {proRata && (
+        <p className="text-xs text-muted">
+          {noWhole
+            ? "Nothing here makes up a full batch yet, so EVE would give none of these now: they are each item's share of a batch."
+            : "Items short of a full batch add their share of its materials. Under each figure, what whole batches alone give now."}
+        </p>
+      )}
       <div className="overflow-x-auto rounded border border-border">
         <table className="w-full text-sm">
           <caption className="sr-only">Materials each reprocessing option yields, and the ISK they bring</caption>
@@ -808,18 +820,32 @@ function MaterialTable({ result, timeOf, basis }: { result: Result; timeOf: Time
                     <span className="block text-xs text-muted">{row.unpriced ? "no price" : "the buy orders take only part of it"}</span>
                   )}
                 </th>
-                {OPTIONS.map((option) => (
-                  <Fragment key={option.key}>
-                    <td className="px-3 py-2 text-right tabular-nums">{units(row.units[option.key])}</td>
-                    <td className="px-3 py-2 text-right" title={UNIT_PRICE_HINT[basis]}>
-                      <UnitPrice price={row.unitPrice[option.key]} top={row.topPrice} basis={basis} />
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Isk value={row.value[option.key]} />
-                    </td>
-                    <td className="px-3 py-2 text-right text-xs">{row.unpriced ? "—" : <TimeCell time={timeOf(row.typeId, row.units[option.key])} />}</td>
-                  </Fragment>
-                ))}
+                {OPTIONS.map((option) => {
+                  const shared = row.proRataUnits[option.key] !== row.units[option.key];
+                  const price = row.unitPrice[option.key] ?? (row.proRataUnits[option.key] > 0 ? row.topPrice : null);
+                  return (
+                    <Fragment key={option.key}>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {amount(row.proRataUnits[option.key])}
+                        {shared && <span className="block text-xs text-muted">whole: {units(row.units[option.key])}</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right" title={UNIT_PRICE_HINT[basis]}>
+                        <UnitPrice price={price} top={row.topPrice} basis={basis} />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Isk value={row.proRataValue[option.key]} />
+                        {shared && (
+                          <span className="block text-xs text-muted">
+                            whole: <Isk value={row.value[option.key]} />
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right text-xs">
+                        {row.unpriced ? "—" : <TimeCell time={timeOf(row.typeId, Math.ceil(row.proRataUnits[option.key]))} />}
+                      </td>
+                    </Fragment>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
