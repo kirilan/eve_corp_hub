@@ -56,8 +56,8 @@ export type Pricing = { basis: Basis; reprocessingTax: number; salesTax: number;
 export function reprocessStack(item: AppraisalItem, yields: Yields, tax: number): { materials: Map<number, number>; leftover: number } {
   const materials = new Map<number, number>();
   if (!item.reprocess) return { materials, leftover: item.quantity };
-  const { portionSize, materials: recipe, oreSkill } = item.reprocess;
-  const rate = (oreSkill === null ? yields.scrap : yields.ore(oreSkill)) * (1 - tax);
+  const { portionSize, materials: recipe } = item.reprocess;
+  const rate = yieldRate(item, yields, tax);
   const portions = Math.floor(item.quantity / portionSize);
   for (const [typeId, perPortion] of recipe) {
     // The epsilon keeps 0.55 * 20 = 11.000000000000002 and its cousins on the right side of floor.
@@ -65,6 +65,23 @@ export function reprocessStack(item: AppraisalItem, yields: Yields, tax: number)
     if (units > 0) materials.set(typeId, (materials.get(typeId) ?? 0) + units);
   }
   return { materials, leftover: item.quantity - portions * portionSize };
+}
+
+/** Share of an item's recipe that reaches the hangar: its skill's yield less the station's tax. */
+function yieldRate(item: AppraisalItem, yields: Yields, tax: number): number {
+  const oreSkill = item.reprocess?.oreSkill ?? null;
+  return (oreSkill === null ? yields.scrap : yields.ore(oreSkill)) * (1 - tax);
+}
+
+/**
+ * Materials the units short of a whole portion would yield if EVE reprocessed part portions, in
+ * fractions of a unit. It does not: this only prices them for the pro-rata figure.
+ */
+export function leftoverShare(item: AppraisalItem, leftover: number, yields: Yields, tax: number): [number, number][] {
+  if (!item.reprocess || leftover <= 0) return [];
+  const { portionSize, materials: recipe } = item.reprocess;
+  const rate = yieldRate(item, yields, tax);
+  return recipe.map(([typeId, perPortion]) => [typeId, (perPortion * leftover * rate) / portionSize]);
 }
 
 /**
@@ -106,11 +123,17 @@ export type ItemRow = {
   quantity: number;
   reprocessable: boolean;
   oreSkill: number | null;
-  // Units below one portion, left over by reprocessing and counted as sold as they are.
+  // Units per reprocessing batch (1 when not reprocessable), and the units below one, left over by
+  // reprocessing and counted as sold as they are.
+  portionSize: number;
   leftover: number;
   // ISK kept, after sales tax and broker fee.
   asIs: number;
   options: Record<OptionKey, number>;
+  // As `options`, but with the units short of a portion counted as their share of a portion's
+  // materials. EVE reprocesses whole portions only, so this is a guide, not a figure you can get.
+  // Null when nothing is left over.
+  proRata: Record<OptionKey, number> | null;
   best: "asIs" | OptionKey;
   // What buyers pay per unit as it is, before tax and fees: the average over the units sold (lower
   // than `topPrice` when a sale into buy orders walks down the book). Null without a price.
@@ -144,6 +167,8 @@ export type Result = {
     options: Record<OptionKey, number>;
     // Each item whichever way pays more: reprocessed where that beats selling it as it is.
     mixed: Record<OptionKey, number>;
+    // As `options`, counting units short of a portion pro rata (see `ItemRow.proRata`).
+    proRata: Record<OptionKey, number>;
     // Value of items that cannot be reprocessed, in every total as sold as they are.
     notReprocessable: number;
     // What sales tax and broker fees took, per column.
@@ -195,17 +220,28 @@ export function appraise(appraisal: Appraisal, pricing: Pricing, yields: Record<
     };
   });
 
+  // A pro-rata share is priced like the pile it would join; with no pile, at the best order.
+  const shareOf = (typeId: number, key: OptionKey) => unitPrice.get(typeId)?.[key] || (topPrice(books[typeId], pricing.basis) ?? 0);
+
   const grossRows = items.map((item, i) => {
-    const options = byOption((key) => {
-      if (!item.reprocess) return asIs[i].value;
-      const stack = stacks[key][i];
-      let value = stack.leftover * unitAsIs[i];
-      for (const [typeId, n] of stack.materials) value += n * unitPrice.get(typeId)![key];
+    const materialValue = (key: OptionKey) => {
+      let value = 0;
+      for (const [typeId, n] of stacks[key][i].materials) value += n * unitPrice.get(typeId)![key];
       return value;
-    });
+    };
+    const options = byOption((key) => (item.reprocess ? stacks[key][i].leftover * unitAsIs[i] + materialValue(key) : asIs[i].value));
+    const leftover = item.reprocess ? stacks.base[i].leftover : 0;
+    const proRata =
+      leftover > 0
+        ? byOption((key) => {
+            let value = materialValue(key);
+            for (const [typeId, n] of leftoverShare(item, leftover, yields[key], pricing.reprocessingTax)) value += n * shareOf(typeId, key);
+            return value;
+          })
+        : null;
     let best: ItemRow["best"] = "asIs";
     for (const option of OPTIONS) if (item.reprocess && options[option.key] > (best === "asIs" ? asIs[i].value : options[best])) best = option.key;
-    return { asIs: asIs[i].value, options, best };
+    return { asIs: asIs[i].value, options, proRata, best };
   });
 
   const rows: ItemRow[] = items.map((item, i) => ({
@@ -214,9 +250,11 @@ export function appraise(appraisal: Appraisal, pricing: Pricing, yields: Record<
     quantity: item.quantity,
     reprocessable: item.reprocess !== null,
     oreSkill: item.reprocess?.oreSkill ?? null,
+    portionSize: item.reprocess?.portionSize ?? 1,
     leftover: item.reprocess ? stacks.base[i].leftover : 0,
     asIs: grossRows[i].asIs * kept,
     options: byOption((key) => grossRows[i].options[key] * kept),
+    proRata: grossRows[i].proRata && byOption((key) => grossRows[i].proRata![key] * kept),
     best: grossRows[i].best,
     unitPrice: asIs[i].sold > 0 ? unitAsIs[i] : null,
     topPrice: topPrice(books[item.typeId], pricing.basis),
@@ -230,6 +268,7 @@ export function appraise(appraisal: Appraisal, pricing: Pricing, yields: Record<
     asIs: sum((row) => row.asIs),
     options: byOption((key) => sum((row) => row.options[key])),
     mixed: byOption((key) => sum((row) => Math.max(row.asIs, row.options[key]))),
+    proRata: byOption((key) => sum((row) => (row.proRata ?? row.options)[key])),
     notReprocessable: sum((row) => (row.reprocessable ? 0 : row.asIs)),
   };
   return {

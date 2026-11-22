@@ -330,6 +330,7 @@ describe("appraise", () => {
       asIs: 5_001_000,
       options: { base: 5_000_000 + emp.options.base, skills: 5_000_000 + emp.options.skills },
       mixed: { base: 5_000_000 + emp.options.base, skills: 5_000_000 + emp.options.skills },
+      proRata: { base: 5_000_000 + emp.options.base, skills: 5_000_000 + emp.options.skills },
       notReprocessable: 5_000_000,
       fees: { asIs: 0, options: { base: 0, skills: 0 } },
     });
@@ -382,7 +383,31 @@ describe("appraise", () => {
     const items: AppraisalItem[] = [{ typeId: 185, name: "EMP S", quantity: 150, reprocess: reprocessing(185) }];
     const row = appraise(appraisal(items, books), noFees(), BASE_55).items[0];
     expect(row.leftover).toBe(50);
+    expect(row.portionSize).toBe(100);
     expect(row.options.base).toBe(102 * 4 + 8 * 10 + 0 + 50 * 1);
+  });
+
+  it("values units short of a batch pro rata beside the real figure, never in it", () => {
+    const items: AppraisalItem[] = [{ typeId: 185, name: "EMP S", quantity: 150, reprocess: reprocessing(185) }];
+    const result = appraise(appraisal(items, books), noFees(), BASE_55);
+    const row = result.items[0];
+    // The whole portion as before, plus half a portion's materials at 50%, in fractions: 51 Tritanium, 4.25 Pyerite, 0.25 Nocxium.
+    expect(row.proRata!.base).toBeCloseTo(102 * 4 + 8 * 10 + 51 * 4 + 4.25 * 10 + 0.25 * 800, 6);
+    expect(row.options.base).toBe(102 * 4 + 8 * 10 + 50 * 1);
+    expect(result.totals.proRata.base).toBeCloseTo(row.proRata!.base, 6);
+    expect(result.totals.options.base).toBe(row.options.base);
+
+    const whole = appraise(appraisal([{ ...items[0], quantity: 1000 }], books), noFees(), BASE_55);
+    expect(whole.items[0].proRata).toBeNull();
+    expect(whole.totals.proRata).toEqual(whole.totals.options);
+  });
+
+  it("prices a stack below one batch pro rata at the best order, with no materials to sell", () => {
+    const items: AppraisalItem[] = [{ typeId: 185, name: "EMP S", quantity: 50, reprocess: reprocessing(185) }];
+    const result = appraise(appraisal(items, books), noFees(), BASE_55);
+    expect(result.materials).toEqual([]);
+    expect(result.items[0]).toMatchObject({ leftover: 50, options: { base: 50, skills: 50 } });
+    expect(result.items[0].proRata!.base).toBeCloseTo(51 * 4 + 4.25 * 10 + 0.25 * 800, 6);
   });
 });
 

@@ -489,6 +489,12 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
       <OptionCards result={result} priced={appraisal.pricesAvailable} hint={hint} times={times} basis={basis} />
       <ItemTable rows={result.items} oreSkillNames={appraisal.oreSkillNames} basis={basis} timeOf={timeOf} />
       <MaterialTable result={result} timeOf={timeOf} basis={basis} />
+      {result.materials.length === 0 && result.items.some((row) => row.proRata) && (
+        <p className="rounded border border-border bg-surface px-3 py-2 text-sm text-muted">
+          No materials: nothing here makes up a full batch, and EVE reprocesses whole batches only. The pro-rata figures show what a batch
+          would be worth.
+        </p>
+      )}
 
       {appraisal.unknown.length > 0 && (
         <details className="rounded border border-border bg-surface p-4 text-sm">
@@ -515,7 +521,11 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
           value, so the real amount differs a little.
         </li>
         <li>Ore and ice reprocess on Reprocessing, Reprocessing Efficiency, their own processing skill and an implant, not Scrapmetal Processing.</li>
-        <li>Items reprocess in whole portions (ammunition in 100s, for instance); units short of a portion are counted as sold as they are.</li>
+        <li>
+          Items reprocess in whole batches only (cap boosters in 10s, most ammunition in 100s, T2 ammunition in 5,000s); units short of a
+          batch are counted as sold as they are. The <em>pro rata</em> figures under them value those units at their share of a batch&apos;s
+          materials, to show what they would be worth reprocessed once you have a full batch. EVE will not pay that for a part batch.
+        </li>
         <li>
           Time to sell goes by the last 30 days of trades in {hub.regionName}, from EVE&apos;s daily market history (kept per region, not per
           station). The share of them that filled sell orders is read from where the week&apos;s average price sits between the top buy and
@@ -591,6 +601,11 @@ function OptionCards({
                 )}
               </>
             )}
+            {priced && column.key !== "asIs" && Math.abs(totals.proRata[column.key] - total) > 0.5 && (
+              <p className="text-sm text-muted" title="Counting units short of a whole batch as their share of its materials. EVE reprocesses whole batches only.">
+                Part batches pro rata: <Isk value={totals.proRata[column.key]} className="text-foreground" />
+              </p>
+            )}
             {priced && column.key === "asIs" && totals.notReprocessable > 0 && (
               <p className="text-sm text-muted">
                 Every total includes <Isk value={totals.notReprocessable} /> of items that cannot be reprocessed, sold as they are.
@@ -648,7 +663,10 @@ function Flags({ row, oreSkillNames, basis, time }: { row: ItemRow; oreSkillName
   const notes = [
     !row.reprocessable && "cannot be reprocessed",
     row.oreSkill !== null && (oreSkillNames[row.oreSkill] ?? "ore"),
-    row.leftover > 0 && `${units(row.leftover)} short of a portion`,
+    row.leftover > 0 &&
+      (row.leftover === row.quantity
+        ? `reprocesses in batches of ${units(row.portionSize)}, so none of these can be`
+        : `reprocesses in batches of ${units(row.portionSize)}: ${units(row.leftover)} left over, sold as they are`),
     row.unpriced && "no price",
     row.partial && "the buy orders take only part of it",
     basis === "buy" && time.depth >= 0.05 && `the stack walks the buy orders down ${pct(time.depth)} on average`,
@@ -698,7 +716,20 @@ function ItemTable({ rows, oreSkillNames, basis, timeOf }: { rows: ItemRow[]; or
   const cell = (row: ItemRow, key: Column["key"]) => {
     if (key !== "asIs" && !row.reprocessable) return <span className="text-muted">—</span>;
     const value = key === "asIs" ? row.asIs : row.options[key];
-    return <Isk value={value} className={row.best === key && value > 0 ? "font-medium text-accent" : ""} />;
+    const proRata = key === "asIs" ? null : row.proRata?.[key];
+    return (
+      <>
+        <Isk value={value} className={row.best === key && value > 0 ? "font-medium text-accent" : ""} />
+        {proRata != null && (
+          <span
+            className="block text-xs text-muted"
+            title={`With the ${units(row.leftover)} short of a batch counted as their share of its materials. EVE reprocesses whole batches of ${units(row.portionSize)} only.`}
+          >
+            ≈ <Isk value={proRata} /> pro rata
+          </span>
+        )}
+      </>
+    );
   };
   return (
     <div className="overflow-x-auto rounded border border-border">

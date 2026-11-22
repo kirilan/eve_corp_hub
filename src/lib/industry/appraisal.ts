@@ -83,8 +83,8 @@ export async function appraiseItems(viewerId: string, text: string, hub: Hub): P
 
 /**
  * Only as much of each book as the page can use: buy levels down to where the most units any option
- * could sell are filled (reprocessing at a full 100%, more than any skills reach), and the single best
- * sell order.
+ * could sell are filled (reprocessing at a full 100%, more than any skills reach, and a part portion
+ * counted as a whole one so the pro-rata figure has a price), and the single best sell order.
  */
 function trimmedBooks(items: AppraisalItem[], books: Map<number, Book>): Record<number, Book> {
   const most = new Map<number, number>();
@@ -92,7 +92,7 @@ function trimmedBooks(items: AppraisalItem[], books: Map<number, Book>): Record<
   for (const item of items) {
     add(item.typeId, item.quantity);
     if (!item.reprocess) continue;
-    const portions = Math.floor(item.quantity / item.reprocess.portionSize);
+    const portions = Math.ceil(item.quantity / item.reprocess.portionSize);
     for (const [typeId, perPortion] of item.reprocess.materials) add(typeId, perPortion * portions);
   }
   const out: Record<number, Book> = {};
