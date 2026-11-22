@@ -24,3 +24,13 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/*
+ * Lets a wide block (a table with many columns) grow past the page's max-w-5xl on wide screens,
+ * centred on the page, keeping a 1rem gutter each side. On narrow screens it is just the page width.
+ */
+@utility breakout {
+  --breakout-width: max(100%, min(100vw - 2rem, 110rem));
+  width: var(--breakout-width);
+  margin-left: calc((100% - var(--breakout-width)) / 2);
+}

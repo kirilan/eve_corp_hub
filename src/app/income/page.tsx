@@ -388,7 +388,7 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
 
       {trading && <Trading userId={viewer.userId} filters={filters} from={report.from} to={report.to} />}
 
-      <section id="orders" className="scroll-mt-4 space-y-3">
+      <section id="orders" className="breakout scroll-mt-4 space-y-3">
         <h2 className="font-medium">Open market orders</h2>
         <Suspense fallback={<p className="text-sm text-muted">Reading orders and their markets…</p>}>
           <OpenOrders userId={viewer.userId} characterIds={filters.characterIds} colorOf={colorOf} />
