@@ -9,7 +9,8 @@ import { typeNames } from "@/lib/eve/types";
 import { regionPace } from "@/lib/industry/history";
 import { HUBS } from "@/lib/industry/hubs";
 import { type HubPrices, locationPrices, type MarketLocation } from "@/lib/industry/market";
-import { competitors, type Standing, standing, type Status } from "./standing";
+import { corpOrders, saveSharedOrders, toShared } from "./shared";
+import { type CorpAhead, corpAhead, competitors, type Standing, standing, type Status } from "./standing";
 
 /**
  * Open market orders of a profile's characters and where each stands in its station's book, read
@@ -21,6 +22,9 @@ import { competitors, type Standing, standing, type Status } from "./standing";
 const BOOK_MAX_AGE_MS = 5 * 60 * 1000;
 // A structure's market is read whole (tens of thousands of orders): not more often than the calculator does.
 const STRUCTURE_MAX_AGE_MS = 15 * 60 * 1000;
+// On demand (Sync now): ESI's own caches (5 minutes for both) make anything fresher the same data again.
+const FRESH_BOOK_MAX_AGE_MS = 60 * 1000;
+const FRESH_STRUCTURE_MAX_AGE_MS = 5 * 60 * 1000;
 // Player structures have ids above every NPC station's.
 const FIRST_STRUCTURE_ID = 1_000_000_000_000;
 
@@ -58,9 +62,11 @@ export type OrderRow = Omit<Standing, "status"> & {
   status: Status | "unknown";
   note: string | null;
   bookAsOf: string | null;
+  // Corp members' orders ahead of this one; null when none are, or this character does not share.
+  corp: CorpAhead | null;
 };
 
-export type OrderCharacter = { id: number; name: string; allowed: boolean; error: string | null; orders: number };
+export type OrderCharacter = { id: number; name: string; allowed: boolean; sharing: boolean; error: string | null; orders: number };
 
 export type OrdersReport = { characters: OrderCharacter[]; orders: OrderRow[]; warnings: string[]; checkedAt: number };
 
@@ -70,10 +76,17 @@ function expiry(order: EsiCharacterOrder): string {
   return new Date(new Date(order.issued).getTime() + order.duration * 24 * 60 * 60 * 1000).toISOString();
 }
 
-export async function openOrders(userId: string, parentSignal?: AbortSignal): Promise<OrdersReport> {
-  const signal = deadlineSignal(OPERATION_TIMEOUT_MS, parentSignal);
+/**
+ * `fresh` (the Sync now button) re-reads order books older than a minute, and structure markets older
+ * than five, instead of the usual five and fifteen.
+ */
+export async function openOrders(userId: string, options: { fresh?: boolean; signal?: AbortSignal } = {}): Promise<OrdersReport> {
+  const signal = deadlineSignal(OPERATION_TIMEOUT_MS, options.signal);
   const profile = await listCharacters(userId);
-  const characters: OrderCharacter[] = profile.map((c) => ({ id: c.id, name: c.name, allowed: hasFeature(c.scopes, "orders"), error: null, orders: 0 }));
+  const characters: OrderCharacter[] = profile.map((c) => {
+    const allowed = hasFeature(c.scopes, "orders");
+    return { id: c.id, name: c.name, allowed, sharing: allowed && c.shareOrdersWithCorp, error: null, orders: 0 };
+  });
 
   const read = await Promise.all(
     characters.map(async (character) => {
@@ -83,6 +96,10 @@ export async function openOrders(userId: string, parentSignal?: AbortSignal): Pr
         const orders = await esi<EsiCharacterOrder[]>(`/characters/${character.id}/orders`, { token, signal });
         if (!Array.isArray(orders)) throw new Error("orders are not a list");
         character.orders = orders.length;
+        if (character.sharing) {
+          // Best effort: corp members fall back to reading this character themselves when the snapshot is stale.
+          await saveSharedOrders(character.id, toShared(orders)).catch((error) => console.warn(`could not keep shared orders of ${character.id}`, error));
+        }
         return orders.map((order) => ({ ...order, characterId: character.id }));
       } catch (error) {
         character.allowed = !(error instanceof ConsentMissingError);
@@ -99,6 +116,17 @@ export async function openOrders(userId: string, parentSignal?: AbortSignal): Pr
   );
   const orders = read.flat();
   if (orders.length === 0) return { characters, orders: [], warnings: [], checkedAt: Date.now() };
+
+  const corporationOf = new Map(profile.map((c) => [c.id, c.corporationId]));
+  const sharing = new Set(characters.filter((c) => c.sharing).map((c) => c.id));
+  const corp = await corpOrders(
+    userId,
+    profile.map((c) => ({ id: c.id, userId, corporationId: c.corporationId, shareOrdersWithCorp: sharing.has(c.id), ordersAllowed: sharing.has(c.id) })),
+    signal,
+  ).catch((error) => {
+    console.warn("corp order matching failed", error);
+    return [];
+  });
 
   const regionIds = [...new Set(orders.map((o) => o.region_id))];
   const stationIds = [...new Set(orders.map((o) => o.location_id).filter((id) => !isStructure(id)))];
@@ -130,7 +158,13 @@ export async function openOrders(userId: string, parentSignal?: AbortSignal): Pr
       try {
         const prices = await locationPrices(location, here.map((o) => o.type_id), userId, {
           signal,
-          maxAgeMs: structure ? STRUCTURE_MAX_AGE_MS : BOOK_MAX_AGE_MS,
+          maxAgeMs: options.fresh
+            ? structure
+              ? FRESH_STRUCTURE_MAX_AGE_MS
+              : FRESH_BOOK_MAX_AGE_MS
+            : structure
+              ? STRUCTURE_MAX_AGE_MS
+              : BOOK_MAX_AGE_MS,
         });
         books.set(locationId, prices);
         warnings.push(...prices.warnings);
@@ -178,7 +212,7 @@ export async function openOrders(userId: string, parentSignal?: AbortSignal): Pr
       const why = isStructure(order.location_id)
         ? "Structure market not readable: a character of yours that can dock there must allow market reading"
         : "Order book not available right now";
-      return { ...base, status: "unknown", note: why, bestOther: null, unitsAhead: 0, daysAhead: null, suggest: null };
+      return { ...base, status: "unknown", note: why, bestOther: null, unitsAhead: 0, daysAhead: null, suggest: null, corp: null };
     }
     // Every open order of the profile on the same side at this station is a sibling, not competition.
     const siblings = orders
@@ -186,7 +220,17 @@ export async function openOrders(userId: string, parentSignal?: AbortSignal): Pr
       .map((o) => ({ price: o.price, remain: o.volume_remain }));
     const others = competitors(isBuy ? book.buy : book.sell, siblings);
     const perDay = pace.get(order.region_id)?.get(order.type_id) ?? null;
-    return { ...base, ...standing(isBuy, order.price, order.volume_remain, others, perDay), note: null };
+    // Only a sharing character is told about corp members, and only about those in its own corporation.
+    const corporationId = corporationOf.get(order.characterId);
+    const theirs = sharing.has(order.characterId)
+      ? corp.filter((o) => o.corporationId === corporationId && o.locationId === order.location_id && o.typeId === order.type_id && o.isBuy === isBuy)
+      : [];
+    return {
+      ...base,
+      ...standing(isBuy, order.price, order.volume_remain, others, perDay),
+      note: null,
+      corp: theirs.length > 0 ? corpAhead(isBuy, order.price, others, theirs) : null,
+    };
   });
   return { characters, orders: rows, warnings: [...new Set(warnings)], checkedAt: Date.now() };
 }

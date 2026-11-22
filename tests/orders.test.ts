@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { competitors, realFloor, standing, tick, tickAbove, tickBelow } from "@/lib/orders/standing";
+import { competitors, corpAhead, realFloor, standing, tick, tickAbove, tickBelow } from "@/lib/orders/standing";
+import { type OrderSharer, sharesOrdersWith } from "@/lib/permissions";
 
 describe("ticks", () => {
   it("steps at the fourth significant digit, a cent at least", () => {
@@ -34,5 +35,41 @@ describe("standing", () => {
   it("never counts the profile's own orders as competition", () => {
     expect(competitors([[99, 10], [100, 30]], [{ price: 99, remain: 10 }, { price: 100, remain: 5 }])).toEqual([[100, 25]]);
     expect(standing(false, 100, 5, competitors([[99, 10], [100, 30]], [{ price: 99, remain: 10 }, { price: 100, remain: 5 }]), null).status).toBe("cheapest");
+  });
+});
+
+describe("corp competitors", () => {
+  it("counts corp orders priced ahead only while the live book still holds them", () => {
+    // Sell at 100; a corp member sells at 99 (the best price) and 99.5, someone else at 99.5 too.
+    expect(corpAhead(false, 100, [[99, 10], [99.5, 30]], [{ price: 99, remain: 10 }, { price: 99.5, remain: 5 }])).toEqual({ units: 15, holdsBest: true });
+    // The corp order at 98 is gone from the book (filled or changed since the snapshot).
+    expect(corpAhead(false, 100, [[99, 10]], [{ price: 98, remain: 10 }])).toBeNull();
+    // Never more units than the book shows at that price.
+    expect(corpAhead(false, 100, [[99, 4]], [{ price: 99, remain: 10 }])).toEqual({ units: 4, holdsBest: true });
+    // Behind the best price, or behind us, it is not the one undercutting.
+    expect(corpAhead(false, 100, [[98, 5], [99, 10]], [{ price: 99, remain: 10 }])).toEqual({ units: 10, holdsBest: false });
+    expect(corpAhead(false, 100, [[101, 10]], [{ price: 101, remain: 10 }])).toBeNull();
+  });
+
+  it("looks upward for buy orders", () => {
+    expect(corpAhead(true, 50, [[51, 20], [49, 5]], [{ price: 51, remain: 20 }])).toEqual({ units: 20, holdsBest: true });
+    expect(corpAhead(true, 50, [[51, 20], [49, 5]], [{ price: 49, remain: 5 }])).toBeNull();
+  });
+
+  it("matches only two opted-in characters of the same corporation on different profiles", () => {
+    const sharer = (userId: string, corporationId: number | null = 1, over: Partial<OrderSharer> = {}): OrderSharer => ({
+      userId,
+      corporationId,
+      shareOrdersWithCorp: true,
+      ordersAllowed: true,
+      ...over,
+    });
+    expect(sharesOrdersWith(sharer("a"), sharer("b"))).toBe(true);
+    expect(sharesOrdersWith(sharer("a"), sharer("a"))).toBe(false);
+    expect(sharesOrdersWith(sharer("a"), sharer("b", 2))).toBe(false);
+    expect(sharesOrdersWith(sharer("a", null), sharer("b", null))).toBe(false);
+    expect(sharesOrdersWith(sharer("a", 1, { shareOrdersWithCorp: false }), sharer("b"))).toBe(false);
+    expect(sharesOrdersWith(sharer("a"), sharer("b", 1, { shareOrdersWithCorp: false }))).toBe(false);
+    expect(sharesOrdersWith(sharer("a"), sharer("b", 1, { ordersAllowed: false }))).toBe(false);
   });
 });

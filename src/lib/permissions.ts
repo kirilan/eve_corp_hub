@@ -115,3 +115,24 @@ export function canGrantDirector(viewer: Viewer | null, target: { userId: string
 export function canShareWithCorporation(viewer: Viewer | null): boolean {
   return corporationOf(viewer) !== null;
 }
+
+/** What `sharesOrdersWith` needs of a character. */
+export type OrderSharer = { userId: string; corporationId: number | null; shareOrdersWithCorp: boolean; ordersAllowed: boolean };
+
+/**
+ * Whether two characters may be told they compete on the market: both opted in to sharing orders
+ * with their corporation (and still allow order tracking), both are in the same corporation, and
+ * they belong to different profiles (a profile's own orders are siblings, never competition).
+ * Only that they compete is shown, never whose order it is.
+ */
+export function sharesOrdersWith(mine: OrderSharer, theirs: OrderSharer): boolean {
+  return (
+    mine.userId !== theirs.userId &&
+    mine.corporationId !== null &&
+    mine.corporationId === theirs.corporationId &&
+    mine.shareOrdersWithCorp &&
+    theirs.shareOrdersWithCorp &&
+    mine.ordersAllowed &&
+    theirs.ordersAllowed
+  );
+}

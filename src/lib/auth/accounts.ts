@@ -1,10 +1,10 @@
 import "server-only";
-import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, or, type SQL } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { type Character, characters, corporationDirectors, users, walletSyncs } from "@/db/schema";
+import { type Character, characters, corporationDirectors, sharedOrders, users, walletSyncs } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { affiliations, type Affiliation } from "@/lib/eve/esi";
-import { revokeRefreshToken, type TokenResponse, type VerifiedCharacter } from "@/lib/eve/sso";
+import { hasFeature, revokeRefreshToken, type TokenResponse, type VerifiedCharacter } from "@/lib/eve/sso";
 
 export type Intent = "login" | "link";
 
@@ -144,12 +144,27 @@ export async function revokeCharacterScopes(userId: string, characterId: number)
     const character = await lockOwnedCharacter(tx, userId, characterId);
     if (!character) throw new Error("that character is not linked to your profile");
     await tx.update(characters)
-      .set({ scopes: [], refreshTokenEnc: null, accessTokenEnc: null, accessTokenExpiresAt: null, tokenError: null })
+      .set({ scopes: [], refreshTokenEnc: null, accessTokenEnc: null, accessTokenExpiresAt: null, tokenError: null, shareOrdersWithCorp: false })
       .where(eq(characters.id, characterId));
+    await tx.delete(sharedOrders).where(eq(sharedOrders.characterId, characterId));
     await tx.update(walletSyncs).set({ leaseId: null, leaseExpiresAt: null }).where(eq(walletSyncs.characterId, characterId));
     return character.refreshTokenEnc;
   });
   if (token) await revokeRefreshToken(decrypt(token));
+}
+
+/**
+ * Opts a character in or out of sharing its open orders with corp members who share theirs. Needs
+ * order tracking; turning it off deletes the orders kept for it.
+ */
+export async function setOrderSharing(userId: string, characterId: number, share: boolean): Promise<void> {
+  await db.transaction(async (tx) => {
+    const character = await lockOwnedCharacter(tx, userId, characterId);
+    if (!character) throw new Error("that character is not linked to your profile");
+    if (share && !hasFeature(character.scopes, "orders")) throw new Error("allow order tracking for this character first");
+    await tx.update(characters).set({ shareOrdersWithCorp: share }).where(eq(characters.id, characterId));
+    if (!share) await tx.delete(sharedOrders).where(eq(sharedOrders.characterId, characterId));
+  });
 }
 
 const AFFILIATION_MAX_AGE_MS = 60 * 60 * 1000; // ESI caches /characters/affiliation for an hour anyway
@@ -160,12 +175,21 @@ const AFFILIATION_MAX_AGE_MS = 60 * 60 * 1000; // ESI caches /characters/affilia
  * access within the hour without signing in again. An ESI outage keeps the last known value.
  */
 export async function refreshAffiliations(userId: string): Promise<void> {
+  await refreshStaleAffiliations(eq(characters.userId, userId));
+}
+
+/** The same for characters on any profile, e.g. corp members whose orders are matched against the viewer's. */
+export async function refreshCharacterAffiliations(characterIds: number[]): Promise<void> {
+  if (characterIds.length > 0) await refreshStaleAffiliations(inArray(characters.id, characterIds));
+}
+
+async function refreshStaleAffiliations(which: SQL): Promise<void> {
   const stale = await db
     .select({ id: characters.id })
     .from(characters)
     .where(
       and(
-        eq(characters.userId, userId),
+        which,
         or(isNull(characters.affiliationCheckedAt), lt(characters.affiliationCheckedAt, new Date(Date.now() - AFFILIATION_MAX_AGE_MS))),
       ),
     );
@@ -232,6 +256,7 @@ export async function listCharacters(userId: string) {
       allianceId: characters.allianceId,
       scopes: characters.scopes,
       tokenError: characters.tokenError,
+      shareOrdersWithCorp: characters.shareOrdersWithCorp,
       createdAt: characters.createdAt,
     })
     .from(characters)

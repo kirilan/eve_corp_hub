@@ -61,6 +61,9 @@ export const characters = pgTable(
     accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
     // Set when SSO rejects the refresh token (revoked in-game, or app access removed).
     tokenError: text("token_error"),
+    // Opt-in: this character's open orders are kept (see `sharedOrders`) so corp members who also
+    // share can tell when they compete with each other. Needs order tracking too.
+    shareOrdersWithCorp: boolean("share_orders_with_corp").notNull().default(false),
     createdAt: createdAt(),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   },
@@ -442,6 +445,21 @@ export const marketSnapshots = pgTable("market_snapshots", {
   orders: integer("orders"),
   // Last failure, cleared by the next success; the previous read's prices stay in use meanwhile.
   error: text("error"),
+});
+
+/** The part of an open order that corp matching needs: where, what, which side, at what price. */
+export type SharedOrder = { locationId: number; typeId: number; isBuy: boolean; price: number; remain: number };
+
+/**
+ * Open orders of characters that share them with their corporation, one row per character, replaced
+ * on every read. Only kept while the character shares; turning sharing off or revoking access deletes it.
+ */
+export const sharedOrders = pgTable("shared_orders", {
+  characterId: eveId("character_id")
+    .primaryKey()
+    .references(() => characters.id, { onDelete: "cascade" }),
+  orders: jsonb("orders").$type<SharedOrder[]>().notNull(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 /**

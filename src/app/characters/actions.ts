@@ -2,7 +2,7 @@
 
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
-import { revokeCharacterScopes, setMainCharacter, unlinkCharacter } from "@/lib/auth/accounts";
+import { revokeCharacterScopes, setMainCharacter, setOrderSharing, unlinkCharacter } from "@/lib/auth/accounts";
 import { currentUserId } from "@/lib/auth/session";
 
 // Every action re-reads the session itself: a Server Function is a public endpoint, whatever the UI shows.
@@ -24,5 +24,10 @@ export async function unlink(characterId: number) {
 
 export async function revokeAccess(characterId: number) {
   await revokeCharacterScopes(await requireUserId(), characterId);
+  refresh();
+}
+
+export async function shareOrders(characterId: number, share: boolean) {
+  await setOrderSharing(await requireUserId(), characterId, share);
   refresh();
 }

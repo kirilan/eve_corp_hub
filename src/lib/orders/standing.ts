@@ -90,3 +90,29 @@ export function competitors(levels: PriceLevel[], own: { price: number; remain: 
     .map(([price, units]): PriceLevel => [price, units - (mine.get(price) ?? 0)])
     .filter(([, units]) => units > 0);
 }
+
+export type CorpAhead = {
+  // Corp members' units priced ahead of the order and still on the book.
+  units: number;
+  // True when the best competing price is (at least partly) a corp member's.
+  holdsBest: boolean;
+};
+
+/**
+ * Corp members' orders priced ahead of this one, on the same side of the same station's book.
+ * `others` is that side of the live book, best first, own orders already taken out; `corp` comes from
+ * stored snapshots, so a corp order only counts while the live book still holds units at its price,
+ * and never more units than the book shows there. Null when no corp member is ahead.
+ */
+export function corpAhead(isBuy: boolean, price: number, others: PriceLevel[], corp: { price: number; remain: number }[]): CorpAhead | null {
+  const ahead = (level: number) => (isBuy ? level > price : level < price);
+  const byPrice = new Map<number, number>();
+  for (const order of corp) if (ahead(order.price)) byPrice.set(order.price, (byPrice.get(order.price) ?? 0) + order.remain);
+  let units = 0;
+  for (const [level, onBook] of others) {
+    const theirs = byPrice.get(level);
+    if (theirs) units += Math.min(theirs, onBook);
+  }
+  if (units === 0) return null;
+  return { units, holdsBest: byPrice.has(others[0][0]) };
+}

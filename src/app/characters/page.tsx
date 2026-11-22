@@ -8,7 +8,7 @@ import { listCharacters } from "@/lib/auth/accounts";
 import { getViewer } from "@/lib/auth/viewer";
 import { type Feature, FEATURES, featuresWith, hasFeature } from "@/lib/eve/sso";
 import { corporationLogoUrl, entityNames, portraitUrl } from "@/lib/eve/names";
-import { makeMain, revokeAccess, unlink } from "./actions";
+import { makeMain, revokeAccess, shareOrders, unlink } from "./actions";
 
 export const metadata: Metadata = { title: "Characters" };
 
@@ -55,7 +55,11 @@ export default function CharactersPage({ searchParams }: PageProps<"/characters"
           contract sales, rewards) and the taxes and fees charged on it, plus the character&apos;s market
           transactions (what it bought and sold, at what price) for trade profit, visible to you alone; nothing else
           in the wallet is stored. <em>Order tracking</em> reads the character&apos;s open market orders to show
-          whether each is still the best price; orders are read when you open Personal income and not stored.{" "}
+          whether each is still the best price; orders are read when you open Personal income and not stored, unless
+          you also choose <em>Share orders with corp</em>: then the character&apos;s open orders (item, station, side,
+          price and units left) are kept, so corp members who share theirs too are told when one of you is priced
+          ahead of the other. They are told only that it is a corp member, never which one. Turning sharing off
+          deletes what was kept.{" "}
           <em>Industry tracking</em> reads the character&apos;s industry jobs and blueprints, so an item it built is costed
           from the materials that went into it; it works with the income tracker.
           Revoking access keeps the history already collected until you delete it on the{" "}
@@ -133,6 +137,7 @@ async function CharacterList() {
                       ),
                     )
                   )}
+                  {character.shareOrdersWithCorp && granted.includes("orders") && <span className="text-emerald-400">Orders shared with corp</span>}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 text-sm">
@@ -156,6 +161,20 @@ async function CharacterList() {
                       {FEATURE_LABELS[f].grant}
                     </a>
                   ))}
+                {granted.includes("orders") && (
+                  <form action={shareOrders.bind(null, character.id, !character.shareOrdersWithCorp)}>
+                    <button
+                      className="rounded border border-border px-3 py-1.5 hover:border-accent"
+                      title={
+                        character.shareOrdersWithCorp
+                          ? "Stop sharing this character's open orders and delete what was kept"
+                          : "Keep this character's open orders so corp members who share theirs see when you compete, without seeing who"
+                      }
+                    >
+                      {character.shareOrdersWithCorp ? "Stop sharing orders" : "Share orders with corp"}
+                    </button>
+                  </form>
+                )}
                 {granted.length > 0 && (
                   <form action={revokeAccess.bind(null, character.id)}>
                     <button

@@ -1,12 +1,14 @@
 import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/db";
-import { characters, users } from "@/db/schema";
+import { characters, sharedOrders, users } from "@/db/schema";
 import {
   completeSignIn,
   LinkConflictError,
   loadViewer,
+  revokeCharacterScopes,
   setMainCharacter,
+  setOrderSharing,
   unlinkCharacter,
 } from "@/lib/auth/accounts";
 import { decrypt } from "@/lib/crypto";
@@ -110,5 +112,36 @@ describe("main and unlink", () => {
     await expect(unlinkCharacter(mine.userId, 1)).rejects.toThrow(/main/);
     await unlinkCharacter(mine.userId, 2);
     expect(await db.$count(characters, eq(characters.userId, mine.userId))).toBe(1);
+  });
+});
+
+describe("order sharing", () => {
+  const ORDER_SCOPES = ["esi-markets.read_character_orders.v1"];
+  const kept = async (id: number) => (await db.select().from(sharedOrders).where(eq(sharedOrders.characterId, id))).length;
+  const keep = (id: number) => db.insert(sharedOrders).values({ characterId: id, orders: [{ locationId: 1, typeId: 2, isBuy: false, price: 3, remain: 4 }] });
+
+  it("needs order tracking, and only the owner can change it", async () => {
+    const plain = await signIn(character(1));
+    await expect(setOrderSharing(plain.userId, 1, true)).rejects.toThrow(/order tracking/);
+    const trader = await signIn(character(2, { scopes: ORDER_SCOPES }));
+    await expect(setOrderSharing(plain.userId, 2, true)).rejects.toThrow(/not linked/);
+    await setOrderSharing(trader.userId, 2, true);
+    const [row] = await db.select().from(characters).where(eq(characters.id, 2));
+    expect(row.shareOrdersWithCorp).toBe(true);
+  });
+
+  it("deletes what was kept when sharing stops or access is revoked", async () => {
+    const trader = await signIn(character(1, { scopes: ORDER_SCOPES }));
+    await setOrderSharing(trader.userId, 1, true);
+    await keep(1);
+    await setOrderSharing(trader.userId, 1, false);
+    expect(await kept(1)).toBe(0);
+
+    await setOrderSharing(trader.userId, 1, true);
+    await keep(1);
+    await revokeCharacterScopes(trader.userId, 1);
+    expect(await kept(1)).toBe(0);
+    const [row] = await db.select().from(characters).where(eq(characters.id, 1));
+    expect(row.shareOrdersWithCorp).toBe(false);
   });
 });

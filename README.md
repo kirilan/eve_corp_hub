@@ -21,7 +21,9 @@ profile can see follows its **main character's corporation**.
   contract sales, rewards) with the taxes and fees on it, across all your characters. Click a
   column to see where it came from. Trade performance shows which items you traded at a profit
   or a loss, from what you paid for them, and what you bought and have not sold yet; open market
-  orders show whether each is still the lowest sell or highest buy. Only you see it.
+  orders show whether each is still the lowest sell or highest buy, sortable by any column, with
+  *Sync now* to read them and their order books again on demand. Only you see it, except that
+  characters that share orders with their corp flag when a corp member is the one ahead.
 - **Reprocess or sell**: paste a list of items to see what they bring in Jita or 4-HWWF, sold as
   they are or reprocessed with and without your skills, after taxes and fees, which way pays
   more for each, and roughly how long it takes to sell.
@@ -47,6 +49,11 @@ profile can see follows its **main character's corporation**.
      on *Industry*, to estimate its reprocessing yield, taxes and fees. Nothing is stored.
    - *Allow order tracking*: read that character's open market orders, for *Personal income*, to
      show whether each is outbid or undercut. Read when you look; nothing is stored.
+     Once allowed, *Share orders with corp* keeps the character's open orders (item, station, side,
+     price, units left) so that, between two corp members who both share, an order undercut or
+     outbid by the other is marked *Corp member* in the *Corp* column. Neither is told who; only
+     characters in the same corporation, on different profiles, are matched. *Stop sharing* or
+     *Revoke access* deletes what was kept.
    - *Allow industry tracking*: read that character's industry jobs and blueprints, so trade
      performance costs what it builds from the materials that went into it. Works with the income
      tracker.
