@@ -488,7 +488,7 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
 
       <OptionCards result={result} priced={appraisal.pricesAvailable} hint={hint} times={times} basis={basis} />
       <ItemTable rows={result.items} oreSkillNames={appraisal.oreSkillNames} basis={basis} timeOf={timeOf} />
-      <MaterialTable result={result} timeOf={timeOf} />
+      <MaterialTable result={result} timeOf={timeOf} basis={basis} />
 
       {appraisal.unknown.length > 0 && (
         <details className="rounded border border-border bg-surface p-4 text-sm">
@@ -504,7 +504,12 @@ function Results({ appraisal, selectedHub, skills, settings }: { appraisal: Appr
       )}
 
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted">
-        <li>Every figure is what reaches the wallet: sales tax comes off every sale, the broker fee off a listing.</li>
+        <li>
+          Every figure is what reaches the wallet: sales tax comes off every sale, the broker fee off a listing. <em>Price per unit</em> is
+          the market price those figures start from, before tax and fees: the lowest sell order when listing, or what the buy orders pay
+          when selling now (an average, with the top buy order under it, when a stack sells down several orders). A reprocessed item&apos;s
+          value comes from its materials&apos; prices, in the table below.
+        </li>
         <li>
           The reprocessing tax is counted as that share of the materials&apos; market value. EVE charges it on its own estimate of their
           value, so the real amount differs a little.
@@ -654,6 +659,30 @@ function Flags({ row, oreSkillNames, basis, time }: { row: ItemRow; oreSkillName
 
 type TimeOf = (typeId: number, quantity: number) => SaleTime;
 
+/**
+ * The market price per unit a figure is made from, before tax and fees. Selling a stack down the buy
+ * orders fetches less than the top price, so the average is shown with the top price under it.
+ */
+function UnitPrice({ price, top, basis }: { price: number | null; top: number | null; basis: Basis }) {
+  if (price === null) return <span className="text-muted">—</span>;
+  const walked = basis === "buy" && top !== null && price < top * 0.9995;
+  return (
+    <>
+      <Isk value={price} />
+      {walked && (
+        <span className="block text-xs text-muted" title={`Highest buy order ${formatIskExact(top)}; the stack averages less as it sells down the orders`}>
+          avg · top <Isk value={top} />
+        </span>
+      )}
+    </>
+  );
+}
+
+const UNIT_PRICE_HINT: Record<Basis, string> = {
+  buy: "What the buy orders pay per unit, before sales tax: the highest buy order, or the average when the stack sells down several",
+  sell: "The lowest sell order, which a listing is priced at, before sales tax and the broker fee",
+};
+
 /** A sale's time, with how much goes at once when that is only part of it. */
 function TimeCell({ time }: { time: SaleTime }) {
   return (
@@ -679,6 +708,9 @@ function ItemTable({ rows, oreSkillNames, basis, timeOf }: { rows: ItemRow[]; or
           <tr>
             <th scope="col" className="px-3 py-2 font-medium">Item</th>
             <th scope="col" className="px-3 py-2 text-right font-medium">Quantity</th>
+            <th scope="col" className="px-3 py-2 text-right font-medium" title={UNIT_PRICE_HINT[basis]}>
+              Price per unit
+            </th>
             {COLUMNS.map((column) => (
               <th key={column.key} scope="col" className="px-3 py-2 text-right font-medium">
                 {column.key === "asIs" ? "As they are" : column.key === "base" ? "No skills" : "With skills"}
@@ -698,6 +730,9 @@ function ItemTable({ rows, oreSkillNames, basis, timeOf }: { rows: ItemRow[]; or
                   <Flags row={row} oreSkillNames={oreSkillNames} basis={basis} time={time} />
                 </th>
                 <td className="px-3 py-2 text-right tabular-nums">{units(row.quantity)}</td>
+                <td className="px-3 py-2 text-right">
+                  <UnitPrice price={row.unitPrice} top={row.topPrice} basis={basis} />
+                </td>
                 {COLUMNS.map((column) => (
                   <td key={column.key} className="px-3 py-2 text-right">
                     {cell(row, column.key)}
@@ -714,7 +749,7 @@ function ItemTable({ rows, oreSkillNames, basis, timeOf }: { rows: ItemRow[]; or
   );
 }
 
-function MaterialTable({ result, timeOf }: { result: Result; timeOf: TimeOf }) {
+function MaterialTable({ result, timeOf, basis }: { result: Result; timeOf: TimeOf; basis: Basis }) {
   if (result.materials.length === 0) return null;
   const sorted = [...result.materials].sort((a, b) => b.value.skills - a.value.skills);
   return (
@@ -727,8 +762,8 @@ function MaterialTable({ result, timeOf }: { result: Result; timeOf: TimeOf }) {
             <tr>
               <th scope="col" className="px-3 py-2 font-medium">Material</th>
               {OPTIONS.map((option) => (
-                <th key={option.key} scope="col" colSpan={3} className="px-3 py-2 text-right font-medium">
-                  {option.key === "base" ? "No skills" : "With skills"}: units · ISK · time to sell
+                <th key={option.key} scope="col" colSpan={4} className="px-3 py-2 text-right font-medium">
+                  {option.key === "base" ? "No skills" : "With skills"}: units · price per unit · ISK · time to sell
                 </th>
               ))}
             </tr>
@@ -745,6 +780,9 @@ function MaterialTable({ result, timeOf }: { result: Result; timeOf: TimeOf }) {
                 {OPTIONS.map((option) => (
                   <Fragment key={option.key}>
                     <td className="px-3 py-2 text-right tabular-nums">{units(row.units[option.key])}</td>
+                    <td className="px-3 py-2 text-right" title={UNIT_PRICE_HINT[basis]}>
+                      <UnitPrice price={row.unitPrice[option.key]} top={row.topPrice} basis={basis} />
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <Isk value={row.value[option.key]} />
                     </td>

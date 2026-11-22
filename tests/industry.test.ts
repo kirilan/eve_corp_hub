@@ -366,6 +366,18 @@ describe("appraise", () => {
     expect(appraise(appraisal(items, {}), noFees(), BASE_55).items[0]).toMatchObject({ unpriced: true, asIs: 0 });
   });
 
+  it("gives the price per unit each figure is made from, before tax and fees", () => {
+    const items: AppraisalItem[] = [{ typeId: 185, name: "EMP S", quantity: 150, reprocess: reprocessing(185) }];
+    const deep = { ...books, 185: { buy: [[2, 100], [1, 1000]], sell: [[3, 1000]] } } satisfies Appraisal["books"];
+    // Into the buy orders: 100 at 2 and 50 at 1, an average of 5/3 under a top price of 2.
+    expect(appraise(appraisal(items, deep), noFees(), BASE_55).items[0]).toMatchObject({ unitPrice: 250 / 150, topPrice: 2 });
+    // Listed, every unit at the lowest sell order; tax and fees do not change it.
+    expect(appraise(appraisal(items, deep), { ...noFees("sell"), salesTax: 0.05 }, BASE_55).items[0]).toMatchObject({ unitPrice: 3, topPrice: 3 });
+    expect(appraise(appraisal(items, {}), noFees(), BASE_55).items[0]).toMatchObject({ unitPrice: null, topPrice: null });
+    const tritanium = appraise(appraisal(items, deep), noFees(), BASE_55).materials.find((m) => m.typeId === 34);
+    expect(tritanium).toMatchObject({ unitPrice: { base: 4, skills: 4 }, topPrice: 4 });
+  });
+
   it("counts units short of a portion as sold as they are", () => {
     const items: AppraisalItem[] = [{ typeId: 185, name: "EMP S", quantity: 150, reprocess: reprocessing(185) }];
     const row = appraise(appraisal(items, books), noFees(), BASE_55).items[0];

@@ -94,6 +94,12 @@ export function keptShare(pricing: Pricing): number {
   return Math.max(0, 1 - pricing.salesTax - (pricing.basis === "sell" ? pricing.brokerFee : 0));
 }
 
+/** The best order on the side a sale goes into: the highest buy, or the lowest sell when listing. */
+export function topPrice(book: Book | undefined, basis: Basis): number | null {
+  const level = basis === "sell" ? book?.sell[0] : book?.buy[0];
+  return level ? level[0] : null;
+}
+
 export type ItemRow = {
   typeId: number;
   name: string;
@@ -106,6 +112,11 @@ export type ItemRow = {
   asIs: number;
   options: Record<OptionKey, number>;
   best: "asIs" | OptionKey;
+  // What buyers pay per unit as it is, before tax and fees: the average over the units sold (lower
+  // than `topPrice` when a sale into buy orders walks down the book). Null without a price.
+  unitPrice: number | null;
+  // The best order on the side being sold into: the highest buy, or the lowest sell when listing.
+  topPrice: number | null;
   // No price for it at the hub, or the buy orders take only part of the stack.
   unpriced: boolean;
   partial: boolean;
@@ -117,6 +128,9 @@ export type MaterialRow = {
   units: Record<OptionKey, number>;
   // ISK kept, after sales tax and broker fee.
   value: Record<OptionKey, number>;
+  // What buyers pay per unit for each option's pile, before tax and fees, as for items.
+  unitPrice: Record<OptionKey, number | null>;
+  topPrice: number | null;
   unpriced: boolean;
   partial: boolean;
 };
@@ -174,6 +188,8 @@ export function appraise(appraisal: Appraisal, pricing: Pricing, yields: Record<
       name: appraisal.materialNames[typeId] ?? `Type ${typeId}`,
       units: perOption,
       value: byOption((key) => sale[key].value * kept),
+      unitPrice: byOption((key) => (sale[key].sold > 0 ? sale[key].value / sale[key].sold : null)),
+      topPrice: topPrice(books[typeId], pricing.basis),
       unpriced: OPTIONS.some((o) => perOption[o.key] > 0 && sale[o.key].sold === 0),
       partial: OPTIONS.some((o) => sale[o.key].sold > 0 && sale[o.key].sold < perOption[o.key]),
     };
@@ -202,6 +218,8 @@ export function appraise(appraisal: Appraisal, pricing: Pricing, yields: Record<
     asIs: grossRows[i].asIs * kept,
     options: byOption((key) => grossRows[i].options[key] * kept),
     best: grossRows[i].best,
+    unitPrice: asIs[i].sold > 0 ? unitAsIs[i] : null,
+    topPrice: topPrice(books[item.typeId], pricing.basis),
     unpriced: asIs[i].sold === 0,
     partial: asIs[i].sold > 0 && asIs[i].sold < item.quantity,
   }));
