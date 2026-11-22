@@ -2,7 +2,7 @@ import "server-only";
 import { listCharacters } from "@/lib/auth/accounts";
 import { characterAccessToken, ConsentMissingError } from "@/lib/auth/tokens";
 import { deadlineSignal, OPERATION_TIMEOUT_MS } from "@/lib/eve/deadline";
-import { esi } from "@/lib/eve/esi";
+import { esiCached } from "@/lib/eve/esi";
 import { entityNames } from "@/lib/eve/names";
 import { hasFeature } from "@/lib/eve/sso";
 import { typeNames } from "@/lib/eve/types";
@@ -10,7 +10,7 @@ import { regionPace } from "@/lib/industry/history";
 import { HUBS } from "@/lib/industry/hubs";
 import { type HubPrices, locationPrices, type MarketLocation } from "@/lib/industry/market";
 import { corpOrders, saveSharedOrders, toShared } from "./shared";
-import { type CorpAhead, corpAhead, competitors, type Standing, standing, type Status } from "./standing";
+import { type CorpAhead, corpAhead, competitors, type OwnAhead, ownAhead, type Standing, standing, type Status } from "./standing";
 
 /**
  * Open market orders of a profile's characters and where each stands in its station's book, read
@@ -64,9 +64,21 @@ export type OrderRow = Omit<Standing, "status"> & {
   bookAsOf: string | null;
   // Corp members' orders ahead of this one; null when none are, or this character does not share.
   corp: CorpAhead | null;
+  // The profile's other orders (any of its characters) priced ahead of this one; null when none are.
+  own: OwnAhead | null;
 };
 
-export type OrderCharacter = { id: number; name: string; allowed: boolean; sharing: boolean; error: string | null; orders: number };
+export type OrderCharacter = {
+  id: number;
+  name: string;
+  allowed: boolean;
+  sharing: boolean;
+  error: string | null;
+  orders: number;
+  // ESI's cache headers for the character's order list (ISO); null when not read or not sent.
+  ordersAsOf: string | null;
+  ordersNextRefresh: string | null;
+};
 
 export type OrdersReport = { characters: OrderCharacter[]; orders: OrderRow[]; warnings: string[]; checkedAt: number };
 
@@ -85,7 +97,7 @@ export async function openOrders(userId: string, options: { fresh?: boolean; sig
   const profile = await listCharacters(userId);
   const characters: OrderCharacter[] = profile.map((c) => {
     const allowed = hasFeature(c.scopes, "orders");
-    return { id: c.id, name: c.name, allowed, sharing: allowed && c.shareOrdersWithCorp, error: null, orders: 0 };
+    return { id: c.id, name: c.name, allowed, sharing: allowed && c.shareOrdersWithCorp, error: null, orders: 0, ordersAsOf: null, ordersNextRefresh: null };
   });
 
   const read = await Promise.all(
@@ -93,7 +105,9 @@ export async function openOrders(userId: string, options: { fresh?: boolean; sig
       if (!character.allowed) return [];
       try {
         const token = await characterAccessToken(userId, character.id, "orders", signal);
-        const orders = await esi<EsiCharacterOrder[]>(`/characters/${character.id}/orders`, { token, signal });
+        const { data: orders, lastModified, expires } = await esiCached<EsiCharacterOrder[]>(`/characters/${character.id}/orders`, { token, signal });
+        character.ordersAsOf = lastModified?.toISOString() ?? null;
+        character.ordersNextRefresh = expires?.toISOString() ?? null;
         if (!Array.isArray(orders)) throw new Error("orders are not a list");
         character.orders = orders.length;
         if (character.sharing) {
@@ -208,17 +222,19 @@ export async function openOrders(userId: string, options: { fresh?: boolean; sig
       range: order.range,
       bookAsOf: prices?.asOf?.toISOString() ?? null,
     };
+    // Every open order of the profile on the same side at this station is a sibling, not competition.
+    const siblings = orders
+      .filter((o) => o.location_id === order.location_id && o.type_id === order.type_id && Boolean(o.is_buy_order) === isBuy)
+      .map((o) => ({ orderId: o.order_id, characterId: o.characterId, price: o.price, remain: o.volume_remain }));
     if (!book) {
       const why = isStructure(order.location_id)
         ? "Structure market not readable: a character of yours that can dock there must allow market reading"
         : "Order book not available right now";
-      return { ...base, status: "unknown", note: why, bestOther: null, unitsAhead: 0, daysAhead: null, suggest: null, corp: null };
+      const own = ownAhead({ orderId: order.order_id, isBuy, price: order.price }, siblings, null);
+      return { ...base, status: "unknown", note: why, bestOther: null, unitsAhead: 0, daysAhead: null, suggest: null, corp: null, own };
     }
-    // Every open order of the profile on the same side at this station is a sibling, not competition.
-    const siblings = orders
-      .filter((o) => o.location_id === order.location_id && o.type_id === order.type_id && Boolean(o.is_buy_order) === isBuy)
-      .map((o) => ({ price: o.price, remain: o.volume_remain }));
     const others = competitors(isBuy ? book.buy : book.sell, siblings);
+    const own = ownAhead({ orderId: order.order_id, isBuy, price: order.price }, siblings, others[0]?.[0] ?? null);
     const perDay = pace.get(order.region_id)?.get(order.type_id) ?? null;
     // Only a sharing character is told about corp members, and only about those in its own corporation.
     const corporationId = corporationOf.get(order.characterId);
@@ -230,6 +246,7 @@ export async function openOrders(userId: string, options: { fresh?: boolean; sig
       ...standing(isBuy, order.price, order.volume_remain, others, perDay),
       note: null,
       corp: theirs.length > 0 ? corpAhead(isBuy, order.price, others, theirs) : null,
+      own,
     };
   });
   return { characters, orders: rows, warnings: [...new Set(warnings)], checkedAt: Date.now() };

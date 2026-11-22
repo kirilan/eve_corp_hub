@@ -9,16 +9,22 @@ import { openOrders } from "@/lib/orders/check";
 const HWWF = 1053970513596;
 const AB = 12076;
 vi.mock("@/lib/auth/tokens", async (orig) => ({ ...(await orig<typeof import("@/lib/auth/tokens")>()), characterAccessToken: vi.fn(async () => "tok") }));
+const characterOrders = (path: string) => {
+  if (path === "/characters/1/orders")
+    return [{ order_id: 9, type_id: AB, region_id: 10000003, location_id: HWWF, range: "region", price: 152000, volume_total: 5, volume_remain: 5, issued: "2026-11-22T13:00:00Z", duration: 90 }];
+  if (path === "/characters/2/orders")
+    return [{ order_id: 8, type_id: AB, region_id: 10000003, location_id: HWWF, range: "region", price: 148900, volume_total: 3, volume_remain: 3, issued: "2026-11-22T13:00:00Z", duration: 90 }];
+  throw new Error(`unexpected ${path}`);
+};
 vi.mock("@/lib/eve/esi", async (orig) => ({
   ...(await orig<typeof import("@/lib/eve/esi")>()),
   affiliations: vi.fn(async () => []),
-  esi: vi.fn(async (path: string) => {
-    if (path === "/characters/1/orders")
-      return [{ order_id: 9, type_id: AB, region_id: 10000003, location_id: HWWF, range: "region", price: 152000, volume_total: 5, volume_remain: 5, issued: "2026-11-22T13:00:00Z", duration: 90 }];
-    if (path === "/characters/2/orders")
-      return [{ order_id: 8, type_id: AB, region_id: 10000003, location_id: HWWF, range: "region", price: 148900, volume_total: 3, volume_remain: 3, issued: "2026-11-22T13:00:00Z", duration: 90 }];
-    throw new Error(`unexpected ${path}`);
-  }),
+  esi: vi.fn(async (path: string) => characterOrders(path)),
+  esiCached: vi.fn(async (path: string) => ({
+    data: characterOrders(path),
+    lastModified: new Date("2026-11-22T14:45:00Z"),
+    expires: new Date("2026-11-22T15:05:00Z"),
+  })),
 }));
 vi.mock("@/lib/industry/market", async (orig) => ({
   ...(await orig<typeof import("@/lib/industry/market")>()),
@@ -55,8 +61,10 @@ async function pilots(share: [boolean, boolean], corporations: [number, number] 
 describe("openOrders with corp sharing", () => {
   it("marks an order a sharing corp member undercuts, reading their orders when none are kept", async () => {
     const [me] = await pilots([true, true]);
-    const [order] = (await openOrders(me)).orders;
-    expect(order).toMatchObject({ status: "undercut", bestOther: 148900, corp: { units: 3, holdsBest: true } });
+    const report = await openOrders(me);
+    expect(report.orders[0]).toMatchObject({ status: "undercut", bestOther: 148900, corp: { units: 3, holdsBest: true } });
+    // ESI's cache headers say how old the order list is, apart from when the page asked.
+    expect(report.characters[0]).toMatchObject({ ordersAsOf: "2026-11-22T14:45:00.000Z", ordersNextRefresh: "2026-11-22T15:05:00.000Z" });
   });
 
   it("marks nothing unless both share and are in the same corporation", async () => {

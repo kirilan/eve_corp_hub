@@ -116,3 +116,32 @@ export function corpAhead(isBuy: boolean, price: number, others: PriceLevel[], c
   if (units === 0) return null;
   return { units, holdsBest: byPrice.has(others[0][0]) };
 }
+
+export type OwnAhead = {
+  // Units of the profile's other orders priced ahead of this one.
+  units: number;
+  // Characters holding those orders (this order's own character too when it has another order ahead).
+  characterIds: number[];
+  // True when one of them is at least as good as the best competing price (or there is no competition).
+  holdsBest: boolean;
+};
+
+/**
+ * The profile's other orders priced ahead of this one, on the same side of the same station's book:
+ * the profile competing with itself. `siblings` are those orders (this one may be among them, it is
+ * skipped); `bestOther` the best competing price, own orders taken out. Null when none is ahead.
+ */
+export function ownAhead(
+  order: { orderId: number; isBuy: boolean; price: number },
+  siblings: { orderId: number; characterId: number; price: number; remain: number }[],
+  bestOther: number | null,
+): OwnAhead | null {
+  const ahead = siblings.filter((s) => s.orderId !== order.orderId && (order.isBuy ? s.price > order.price : s.price < order.price));
+  if (ahead.length === 0) return null;
+  const best = order.isBuy ? Math.max(...ahead.map((s) => s.price)) : Math.min(...ahead.map((s) => s.price));
+  return {
+    units: ahead.reduce((sum, s) => sum + s.remain, 0),
+    characterIds: [...new Set(ahead.map((s) => s.characterId))],
+    holdsBest: bestOther === null || (order.isBuy ? best >= bestOther : best <= bestOther),
+  };
+}

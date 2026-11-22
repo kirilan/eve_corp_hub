@@ -45,6 +45,24 @@ export async function esi<T>(path: string, init: EsiInit = {}): Promise<T> {
   return (await response.json().catch(rethrowRequestError)) as T;
 }
 
+export type EsiCached<T> = { data: T; lastModified: Date | null; expires: Date | null };
+
+const headerDate = (value: string | null) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+/**
+ * Like `esi`, plus ESI's cache headers: `Last-Modified` is when EVE built the data (it may be older than
+ * the request), `Expires` when EVE will build it again.
+ */
+export async function esiCached<T>(path: string, init: EsiInit = {}): Promise<EsiCached<T>> {
+  const response = await request(path, init);
+  const data = response.status === 204 ? (undefined as T) : ((await response.json().catch(rethrowRequestError)) as T);
+  return { data, lastModified: headerDate(response.headers.get("Last-Modified")), expires: headerDate(response.headers.get("Expires")) };
+}
+
 function rethrowRequestError(error: unknown): never {
   if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
     throw new EsiError("EVE did not respond within the request's time budget. Try again shortly.", 504);

@@ -36,7 +36,13 @@ export type DataCell = {
   className?: string;
 };
 
-export type DataRow<T = undefined> = { key: string | number; cells: Record<string, DataCell | undefined>; data?: T };
+export type DataRow<T = undefined> = {
+  key: string | number;
+  cells: Record<string, DataCell | undefined>;
+  data?: T;
+  // Classes for the whole row (e.g. bold for unread).
+  className?: string;
+};
 
 export type Sort = { key: string; dir: 1 | -1 };
 
@@ -268,6 +274,7 @@ export function DataTable<T = undefined>({
   toolbar,
   summary,
   searchPlaceholder = "Search",
+  onCopy,
 }: {
   id: string;
   columns: DataColumn[];
@@ -281,6 +288,8 @@ export function DataTable<T = undefined>({
   // A line about the rows shown (after filtering), above the table; client callers only.
   summary?: (shown: DataRow<T>[]) => ReactNode;
   searchPlaceholder?: string;
+  // Told after a cell is copied, with its row and column; client callers only.
+  onCopy?: (row: DataRow<T>, columnKey: string) => void;
 }) {
   const keys = columns.map((c) => c.key);
   const [layout, setLayout, customised] = useLayout(id, keys);
@@ -307,7 +316,8 @@ export function DataTable<T = undefined>({
         : { key: column.key, dir: column.firstDir ?? (column.left ? 1 : -1) },
     );
 
-  const copy = async (cell: string, text: string) => {
+  const copy = async (cell: string, text: string, row: DataRow<T>, columnKey: string) => {
+    onCopy?.(row, columnKey);
     let ok = true;
     try {
       await navigator.clipboard.writeText(text);
@@ -360,7 +370,7 @@ export function DataTable<T = undefined>({
           </thead>
           <tbody className="divide-y divide-border">
             {shown.map((row) => (
-              <tr key={row.key}>
+              <tr key={row.key} className={row.className}>
                 {shownColumns.map((column) => {
                   const cell = row.cells[column.key];
                   const text = cell?.copy ?? null;
@@ -377,7 +387,7 @@ export function DataTable<T = undefined>({
                           ? undefined
                           : (event) => {
                               if ((event.target as Element).closest(INTERACTIVE)) return;
-                              copy(id, text);
+                              copy(id, text, row, column.key);
                             }
                       }
                       onKeyDown={
@@ -386,7 +396,7 @@ export function DataTable<T = undefined>({
                           : (event) => {
                               if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
                               event.preventDefault();
-                              copy(id, text);
+                              copy(id, text, row, column.key);
                             }
                       }
                     >

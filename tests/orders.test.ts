@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { competitors, corpAhead, realFloor, standing, tick, tickAbove, tickBelow } from "@/lib/orders/standing";
+import { competitors, corpAhead, ownAhead, realFloor, standing, tick, tickAbove, tickBelow } from "@/lib/orders/standing";
 import { type OrderSharer, sharesOrdersWith } from "@/lib/permissions";
 
 describe("ticks", () => {
@@ -71,5 +71,22 @@ describe("corp competitors", () => {
     expect(sharesOrdersWith(sharer("a", 1, { shareOrdersWithCorp: false }), sharer("b"))).toBe(false);
     expect(sharesOrdersWith(sharer("a"), sharer("b", 1, { shareOrdersWithCorp: false }))).toBe(false);
     expect(sharesOrdersWith(sharer("a"), sharer("b", 1, { ordersAllowed: false }))).toBe(false);
+  });
+});
+
+describe("own competitors", () => {
+  const sib = (orderId: number, characterId: number, price: number, remain = 5) => ({ orderId, characterId, price, remain });
+  it("finds the profile's other orders priced ahead, skipping the order itself", () => {
+    const siblings = [sib(1, 10, 100), sib(2, 11, 99), sib(3, 12, 98, 2), sib(4, 13, 101)];
+    expect(ownAhead({ orderId: 1, isBuy: false, price: 100 }, siblings, 98.5)).toEqual({ units: 7, characterIds: [11, 12], holdsBest: true });
+    expect(ownAhead({ orderId: 2, isBuy: false, price: 99 }, siblings, 97)).toEqual({ units: 2, characterIds: [12], holdsBest: false });
+    expect(ownAhead({ orderId: 3, isBuy: false, price: 98 }, siblings, 97)).toBeNull();
+  });
+  it("works for buy orders, with no competition, and for the same character", () => {
+    const siblings = [sib(1, 10, 50), sib(2, 10, 51)];
+    expect(ownAhead({ orderId: 1, isBuy: true, price: 50 }, siblings, null)).toEqual({ units: 5, characterIds: [10], holdsBest: true });
+    expect(ownAhead({ orderId: 2, isBuy: true, price: 51 }, siblings, null)).toBeNull();
+    // Same price is not ahead.
+    expect(ownAhead({ orderId: 1, isBuy: true, price: 50 }, [sib(1, 10, 50), sib(2, 11, 50)], 49)).toBeNull();
   });
 });

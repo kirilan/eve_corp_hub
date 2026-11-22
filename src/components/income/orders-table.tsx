@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { syncOpenOrders } from "@/app/income/actions";
 import { type DataColumn, DataTable, type DataRow } from "@/components/data-table/data-table";
 import { formatIsk, formatIskExact, formatPlain } from "@/lib/income/format";
@@ -30,13 +30,23 @@ export type OrderView = {
   suggest: number | null;
   bookAsOf: string | null;
   corp: { units: number; holdsBest: boolean } | null;
+  own: { units: number; characterIds: number[]; holdsBest: boolean } | null;
 };
 
 export type OrderCharacterView = { id: number; name: string; portrait: string; color: string };
 
 // Mirrors `OrdersReport` from src/lib/orders/check.ts.
 export type OrdersReportView = {
-  characters: { id: number; name: string; allowed: boolean; sharing: boolean; error: string | null; orders: number }[];
+  characters: {
+    id: number;
+    name: string;
+    allowed: boolean;
+    sharing: boolean;
+    error: string | null;
+    orders: number;
+    ordersAsOf: string | null;
+    ordersNextRefresh: string | null;
+  }[];
   orders: OrderView[];
   warnings: string[];
   checkedAt: number;
@@ -53,6 +63,61 @@ const STATUS: Record<string, { icon: string; label: string; tone: string; rank: 
   alone: { icon: "✓", label: "Only order", tone: "text-emerald-400", rank: 3 },
 };
 const needsAttention = (status: string) => (STATUS[status]?.rank ?? 2) === 0;
+
+// ---- Unread: an undercut or outbid order shows bold until its item name is copied (to re-price it in
+// game). Kept in this browser only. The key holds the order's price and the best competing price, so a
+// re-priced order, or a new undercut, is unread again.
+
+const READ_KEY = "orders:read";
+const readKey = (o: OrderView) => `${o.orderId}:${o.price}:${o.bestOther ?? ""}`;
+const readListeners = new Set<() => void>();
+
+function subscribeRead(listener: () => void) {
+  readListeners.add(listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    readListeners.delete(listener);
+    window.removeEventListener("storage", listener);
+  };
+}
+
+function readSnapshot(): string {
+  try {
+    return window.localStorage.getItem(READ_KEY) ?? "[]";
+  } catch {
+    return "[]"; // Storage blocked: everything stays unread for this visit.
+  }
+}
+
+/** The read keys, null until the browser's copy is known (nothing shows bold before then). */
+function useReadOrders(current: OrderView[]) {
+  const raw = useSyncExternalStore(subscribeRead, readSnapshot, () => null);
+  const read = useMemo(() => {
+    if (raw === null) return null;
+    try {
+      const keys: unknown = JSON.parse(raw);
+      return new Set(Array.isArray(keys) ? keys.filter((k): k is string => typeof k === "string") : []);
+    } catch {
+      return new Set<string>();
+    }
+  }, [raw]);
+  const markRead = useCallback(
+    (order: OrderView) => {
+      // Only keys of orders still flagged are kept, so the list never outgrows the open orders.
+      const live = new Set(current.filter((o) => needsAttention(o.status)).map(readKey));
+      const next = [...(read ?? [])].filter((k) => live.has(k));
+      next.push(readKey(order));
+      try {
+        window.localStorage.setItem(READ_KEY, JSON.stringify([...new Set(next)]));
+      } catch {
+        return;
+      }
+      for (const listener of readListeners) listener();
+    },
+    [current, read],
+  );
+  return { read, markRead };
+}
 
 type Side = "all" | "sell" | "buy";
 type Show = "all" | "attention";
@@ -116,6 +181,15 @@ export function OrdersPanel({
     .map((o) => o.bookAsOf)
     .filter((d): d is string => d !== null)
     .sort()[0];
+  // The oldest order list read sets how stale the page can be; the soonest refresh is when syncing helps again.
+  const ordersAsOf = allowed
+    .map((c) => c.ordersAsOf)
+    .filter((d): d is string => d !== null)
+    .sort()[0];
+  const nextRefresh = allowed
+    .map((c) => c.ordersNextRefresh)
+    .filter((d): d is string => d !== null)
+    .sort()[0];
   const characters = withOrders.map((c) => ({
     id: c.id,
     name: c.name,
@@ -136,6 +210,15 @@ export function OrdersPanel({
           {pending ? "Syncing…" : "Sync now"}
         </button>
         <span className="text-xs text-muted">Checked {eveTime(new Date(report.checkedAt))}</span>
+        {ordersAsOf && (
+          <span
+            className="text-xs text-muted"
+            title="When EVE last rebuilt the order list it serves (oldest across your characters). EVE caches it for up to 20 minutes."
+          >
+            · EVE data from {eveTime(new Date(ordersAsOf))}
+            {nextRefresh && new Date(nextRefresh).getTime() > report.checkedAt ? ` · next update ${eveTime(new Date(nextRefresh)).replace(/^\S+ /, "")}` : ""}
+          </span>
+        )}
         {error && <span className="text-xs text-red-300">{error}</span>}
       </div>
       {failing.map((c) => (
@@ -166,10 +249,14 @@ export function OrdersPanel({
         structures, as often as EVE updates them)
         {oldestBook ? ` (oldest used: ${eveTime(new Date(oldestBook))})` : ""}; a structure&apos;s market needs a character of
         yours that can dock there to allow market reading. EVE refreshes a character&apos;s order list every 20 minutes,
-        so a new or changed order can take that long to show, however often you sync.{" "}
+        so a new or changed order can take that long to show, however often you sync. <em>Rival</em> shows{" "}
+        <span className="text-sky-300">⇄</span> when another order of yours, from any of your characters, is priced ahead
+        of one: you are competing with yourself. Undercut and outbid orders show <strong>bold</strong> until you copy their
+        item name (to re-price it in game); a re-priced order, or a new undercut, is bold again. That is remembered in this
+        browser only.{" "}
         {sharing ? (
           <>
-            <em>Corp</em> marks orders where a member of the character&apos;s corporation who also shares their orders is
+            <span className="text-amber-400">⚑</span> <em>Corp member</em> marks orders where a member of the character&apos;s corporation who also shares their orders is
             priced ahead of you; it never says who. Their orders are at most 20 minutes old, and count only while the live
             book still shows them.
           </>
@@ -199,7 +286,12 @@ export function OrdersPanel({
 
 const COLUMNS: DataColumn[] = [
   { key: "status", label: "Status", left: true },
-  { key: "corp", label: "Corp", left: true, title: "A member of this character's corporation, sharing their orders too, is priced ahead of this order" },
+  {
+    key: "corp",
+    label: "Rival",
+    left: true,
+    title: "Who else is priced ahead of this order: another order of yours (any of your characters), or a member of this character's corporation sharing their orders too",
+  },
   { key: "item", label: "Item", left: true },
   { key: "character", label: "Character", left: true },
   { key: "side", label: "Side", left: true },
@@ -216,13 +308,52 @@ const COLUMNS: DataColumn[] = [
 const statusRank = (o: OrderView) => STATUS[o.status]?.rank ?? 2;
 const value = (o: OrderView) => o.price * o.volumeRemain;
 
-function orderRow(o: OrderView, character: OrderCharacterView | undefined, now: number): DataRow<OrderView> {
+function rivalCell(o: OrderView, nameOf: (id: number) => string) {
+  if (!o.own && !o.corp) return { node: <span className="text-muted">–</span>, sort: null, copy: null };
+  const own = o.own;
+  const ownLabel = own
+    ? own.characterIds.length === 1 && own.characterIds[0] === o.characterId
+      ? "Your other order"
+      : `Your ${own.characterIds.filter((id) => id !== o.characterId).map(nameOf).join(", ")}`
+    : null;
+  const titles = [
+    own &&
+      `${units(own.units)} units of your own orders (${own.characterIds.map(nameOf).join(", ")}) are priced ahead of this one${own.holdsBest ? ", at the best price" : ""}`,
+    o.corp && `${units(o.corp.units)} units from corp members are priced ahead of this order${o.corp.holdsBest ? ", including the best price" : ""}`,
+  ].filter(Boolean);
+  return {
+    node: (
+      <span className="flex flex-col gap-0.5">
+        {own && (
+          <span className="text-sky-300">
+            ⇄ {ownLabel}
+            {own.holdsBest ? " (best)" : ""}
+          </span>
+        )}
+        {o.corp && <span className="text-amber-400">⚑ Corp member{o.corp.holdsBest ? " (best)" : ""}</span>}
+      </span>
+    ),
+    // Whoever holds the best price first, then by units ahead.
+    sort: (own?.units ?? 0) + (o.corp?.units ?? 0) + (own?.holdsBest || o.corp?.holdsBest ? 1e15 : 0),
+    copy: [own && ownLabel, o.corp && "Corp member"].filter(Boolean).join(", "),
+    title: titles.join("; "),
+  };
+}
+
+function orderRow(
+  o: OrderView,
+  character: OrderCharacterView | undefined,
+  now: number,
+  nameOf: (id: number) => string,
+  unread: boolean,
+): DataRow<OrderView> {
   const status = STATUS[o.status] ?? STATUS.unknown;
   const filled = o.volumeTotal > 0 ? (o.volumeTotal - o.volumeRemain) / o.volumeTotal : 0;
   const expires = o.expires.slice(0, 16).replace("T", " ");
   return {
     key: o.orderId,
     data: o,
+    className: unread ? "font-bold text-foreground" : undefined,
     cells: {
       status: {
         node: (
@@ -234,15 +365,19 @@ function orderRow(o: OrderView, character: OrderCharacterView | undefined, now: 
         copy: status.label,
         title: o.note ?? undefined,
       },
-      corp: {
-        node: o.corp ? <span className="text-amber-400">⚑ Corp member{o.corp.holdsBest ? " (best)" : ""}</span> : <span className="text-muted">–</span>,
-        sort: o.corp ? o.corp.units + (o.corp.holdsBest ? 1e15 : 0) : null,
-        copy: o.corp ? "Corp member" : null,
-        title: o.corp
-          ? `${units(o.corp.units)} units from corp members are priced ahead of this order${o.corp.holdsBest ? ", including the best price" : ""}`
-          : undefined,
+      corp: rivalCell(o, nameOf),
+      item: {
+        node: (
+          <span className="flex items-center gap-1.5">
+            {unread && <span aria-label="Unread" className="inline-block size-1.5 shrink-0 rounded-full bg-red-300" />}
+            <span className="truncate">{o.typeName}</span>
+          </span>
+        ),
+        sort: o.typeName,
+        copy: o.typeName,
+        title: unread ? `${o.typeName} (not handled yet: copy the name to mark it read)` : o.typeName,
+        className: "max-w-64",
       },
-      item: { node: o.typeName, sort: o.typeName, copy: o.typeName, title: o.typeName, className: "max-w-64 truncate" },
       character: {
         node: (
           <span className="flex items-center gap-1.5">
@@ -324,6 +459,9 @@ export function OrdersTable({
   const [side, setSide] = useState<Side>("all");
   const [show, setShow] = useState<Show>("all");
   const byId = useMemo(() => new Map(characters.map((c) => [c.id, c])), [characters]);
+  const nameOf = (id: number) => byId.get(id)?.name ?? `Character ${id}`;
+  const { read, markRead } = useReadOrders(orders);
+  const isUnread = (o: OrderView) => read !== null && needsAttention(o.status) && !read.has(readKey(o));
 
   const togglePicked = (id: number) =>
     setPicked((current) => {
@@ -340,13 +478,18 @@ export function OrdersTable({
     )
     // The default order, kept for ties whatever column the table is sorted by.
     .sort((a, b) => statusRank(a) - statusRank(b) || value(b) - value(a))
-    .map((o) => orderRow(o, byId.get(o.characterId), now));
-  const attention = orders.filter((o) => (picked.length === 0 || picked.includes(o.characterId)) && needsAttention(o.status)).length;
+    .map((o) => orderRow(o, byId.get(o.characterId), now, nameOf, isUnread(o)));
+  const flagged = orders.filter((o) => (picked.length === 0 || picked.includes(o.characterId)) && needsAttention(o.status));
+  const attention = flagged.length;
+  const unread = flagged.filter(isUnread).length;
 
   return (
     <DataTable
       id="orders"
-      columns={showCorp ? COLUMNS : COLUMNS.filter((c) => c.key !== "corp")}
+      columns={showCorp || orders.some((o) => o.own) ? COLUMNS : COLUMNS.filter((c) => c.key !== "corp")}
+      onCopy={(row, column) => {
+        if (column === "item" && row.data && isUnread(row.data)) markRead(row.data);
+      }}
       rows={rows}
       defaultSort={{ key: "status", dir: 1 }}
       maxHeight="max-h-[48rem]"
@@ -384,7 +527,8 @@ export function OrdersTable({
             ))}
           </div>
           <Toggle active={show === "attention"} onClick={() => setShow(show === "attention" ? "all" : "attention")}>
-            <span className="text-red-300">▼</span> Undercut or outbid ({attention})
+            <span className="text-red-300">▼</span> Undercut or outbid ({attention}
+            {unread > 0 ? `, ${unread} unread` : ""})
           </Toggle>
         </>
       }
