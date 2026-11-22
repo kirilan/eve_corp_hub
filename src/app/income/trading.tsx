@@ -1,6 +1,8 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
+import { type DataCell, type DataColumn, DataTable } from "@/components/data-table/data-table";
 import { type ChartSeries, IncomeChart } from "@/components/income/income-chart";
-import { formatBucket, formatIsk, formatIskExact } from "@/lib/income/format";
+import { formatBucket, formatIsk, formatIskExact, formatPlain } from "@/lib/income/format";
 import type { Filters } from "@/lib/income/report";
 import { type Industry, margin, type Note, NOTES, type SaleFigures } from "@/lib/trade/fifo";
 import { SDE_BUILD } from "@/lib/trade/recipes";
@@ -69,7 +71,7 @@ const NOTE_TEXT: Record<Note, (n: string) => string> = {
 function IndustrySummary({ industry }: { industry: (Industry & { jobs: number }) | null }) {
   if (!industry) {
     return (
-      <p className="text-xs text-muted">
+      <p className="max-w-5xl text-xs text-muted">
         Built something? Choose <em>Allow industry tracking</em> on{" "}
         <Link href="/characters" className="text-accent hover:underline">
           Characters
@@ -87,7 +89,7 @@ function IndustrySummary({ industry }: { industry: (Industry & { jobs: number })
   ].filter(Boolean);
   const notes = NOTES.filter((key) => (industry.notes[key] ?? 0) > 0);
   return (
-    <div className="space-y-1 text-xs text-muted">
+    <div className="max-w-5xl space-y-1 text-xs text-muted">
       <p>Industry: {parts.join(" · ")}.</p>
       {notes.length > 0 && (
         <details>
@@ -127,7 +129,7 @@ export async function Trading({ userId, filters, from, to }: { userId: string; f
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-medium">Trade performance</h2>
         {report.trackedSince && (
-          <p className="text-xs text-muted">Purchases on record from {report.trackedSince.toISOString().slice(0, 10)}</p>
+          <p className="max-w-5xl text-xs text-muted">Purchases on record from {report.trackedSince.toISOString().slice(0, 10)}</p>
         )}
       </div>
       {nothing ? (
@@ -143,7 +145,7 @@ export async function Trading({ userId, filters, from, to }: { userId: string; f
           <Unsold holdings={report.holdings} names={report.categoryNames} excluded={report.excluded} now={report.asOf.getTime()} />
         </>
       )}
-      <p className="text-xs text-muted">
+      <p className="max-w-5xl text-xs text-muted">
         Each sale is matched to the oldest purchases or builds of the same item on any of your characters (first in,
         first out). A built item costs what its job consumed (the blueprint&apos;s recipe at its material efficiency, from
         the oldest stock of each material, built components included), the blueprint copy runs it used (with the
@@ -186,7 +188,7 @@ function TradeChart({ report, filters }: { report: TradeReport; filters: Filters
     <div className="space-y-3 rounded border border-border bg-surface p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="font-medium">Trade profit per {filters.grouping}</h3>
-        <p className="text-xs text-muted">Above the line, items that made money; below, items that lost it. Click a column to see its trades.</p>
+        <p className="max-w-5xl text-xs text-muted">Above the line, items that made money; below, items that lost it. Click a column to see its trades.</p>
       </div>
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
         {sideSeries(false).map((s) => (
@@ -243,7 +245,7 @@ function Breakdown({ report, filters, totals }: { report: TradeReport; filters: 
         />
       </dl>
       {totals.unmatched > 0 && (
-        <p className="text-xs text-muted">
+        <p className="max-w-5xl text-xs text-muted">
           {units(totals.unmatched)} units sold for {formatIsk(totals.unmatchedRevenue)} had no purchase on record: they are in
           sales but not in profit.
         </p>
@@ -264,98 +266,118 @@ function Breakdown({ report, filters, totals }: { report: TradeReport; filters: 
         )}
       </div>
 
-      <div className="max-h-[32rem] overflow-auto rounded border border-border bg-surface">
-        <table className="w-full text-right text-sm whitespace-nowrap tabular-nums">
-          <thead className="sticky top-0 bg-surface text-xs text-muted">
-            <tr className="border-b border-border">
-              <th className="p-2 text-left font-normal">{view === "category" ? "Category" : "Item"}</th>
-              {view === "category" ? <th className="p-2 font-normal">Items</th> : <th className="p-2 text-left font-normal">Category</th>}
-              <th className="p-2 font-normal">Sold</th>
-              {view === "item" && (
-                <>
-                  <th className="p-2 font-normal" title="Average purchase price of the matched units">
-                    Avg buy
-                  </th>
-                  <th className="p-2 font-normal">Avg sell</th>
-                </>
-              )}
-              <th className="p-2 font-normal">Sales</th>
-              <th className="p-2 font-normal">Cost</th>
-              <th className="p-2 font-normal">Sales tax</th>
-              <th className="p-2 font-normal">Profit</th>
-              <th className="p-2 font-normal">Margin</th>
-              <th className="p-2 font-normal" title="Units sold with no purchase on record, and what they sold for">
-                No purchase on record
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {view === "category"
-              ? report.categories.map((row) => (
-                  <tr key={row.categoryId}>
-                    <td className="p-2 text-left">
-                      <Link
-                        href={hrefWith(filters, { tradeView: "item", category: row.categoryId })}
-                        scroll={false}
-                        className="hover:text-accent"
-                        title="Show the items in this category"
-                      >
-                        {row.name}
-                      </Link>
-                    </td>
-                    <td className="p-2">{row.items}</td>
-                    <FigureCells figures={row} />
-                  </tr>
-                ))
-              : items.map((row) => (
-                  <tr key={row.typeId}>
-                    <td className="max-w-72 truncate p-2 text-left" title={row.name}>
-                      {row.name}
-                      <Built built={row.built} of={row.matched} />
-                    </td>
-                    <td className="p-2 text-left text-muted">{report.categoryNames[row.categoryId]}</td>
-                    <FigureCells figures={row} perUnit />
-                  </tr>
-                ))}
-            {(view === "category" ? report.categories.length : items.length) === 0 && (
-              <tr>
-                <td colSpan={12} className="p-4 text-center text-muted">
-                  No sales {report.scope.at ? "in this period" : "in this range"}.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {view === "category" ? (
+        <DataTable
+          id="trade-categories"
+          searchPlaceholder="Search categories"
+          empty={`No sales ${report.scope.at ? "in this period" : "in this range"}.`}
+          columns={[{ key: "name", label: "Category", left: true }, { key: "items", label: "Items" }, { key: "sold", label: "Sold" }, ...FIGURE_COLUMNS]}
+          rows={report.categories.map((row) => ({
+            key: row.categoryId,
+            cells: {
+              name: {
+                node: (
+                  <Link
+                    href={hrefWith(filters, { tradeView: "item", category: row.categoryId })}
+                    scroll={false}
+                    className="hover:text-accent"
+                    title="Show the items in this category"
+                  >
+                    {row.name}
+                  </Link>
+                ),
+                sort: row.name,
+                copy: row.name,
+              },
+              items: { node: row.items, sort: row.items, copy: String(row.items) },
+              ...figureCells(row),
+            },
+          }))}
+        />
+      ) : (
+        <DataTable
+          id="trade-items"
+          searchPlaceholder="Search items"
+          empty={`No sales ${report.scope.at ? "in this period" : "in this range"}.`}
+          columns={[
+            { key: "name", label: "Item", left: true },
+            { key: "category", label: "Category", left: true },
+            { key: "sold", label: "Sold" },
+            { key: "avgBuy", label: "Avg buy", title: "Average purchase price of the matched units" },
+            { key: "avgSell", label: "Avg sell" },
+            ...FIGURE_COLUMNS,
+          ]}
+          rows={items.map((row) => ({
+            key: row.typeId,
+            cells: {
+              name: {
+                node: (
+                  <>
+                    {row.name}
+                    <Built built={row.built} of={row.matched} />
+                  </>
+                ),
+                sort: row.name,
+                copy: row.name,
+                search: row.built > 0 ? "built" : undefined,
+                title: row.name,
+                className: "max-w-72 truncate",
+              },
+              category: {
+                node: report.categoryNames[row.categoryId],
+                sort: report.categoryNames[row.categoryId] ?? null,
+                copy: report.categoryNames[row.categoryId] ?? null,
+                className: "text-muted",
+              },
+              ...figureCells(row, true),
+            },
+          }))}
+        />
+      )}
     </div>
   );
 }
 
-function FigureCells({ figures, perUnit = false }: { figures: SaleFigures; perUnit?: boolean }) {
-  return (
-    <>
-      <td className="p-2">{units(figures.sold)}</td>
-      {perUnit && (
-        <>
-          <td className="p-2">{figures.matched > 0 ? formatIsk(figures.cost / figures.matched) : "–"}</td>
-          <td className="p-2">{formatIsk(figures.revenue / figures.sold)}</td>
-        </>
-      )}
-      <td className="p-2" title={formatIskExact(figures.revenue)}>
-        {formatIsk(figures.revenue)}
-      </td>
-      <td className="p-2">{figures.matched > 0 ? <Cost cost={figures.cost} estimated={figures.estimated} /> : "–"}</td>
-      <td className="p-2">{figures.tax > 0 ? formatIsk(figures.tax) : "–"}</td>
-      <td className="p-2 font-medium">{figures.matched > 0 ? <Profit value={figures.profit} /> : "–"}</td>
-      <td className="p-2">
-        <Margin figures={figures} />
-      </td>
-      <td className="p-2">
-        <Unmatched figures={figures} />
-      </td>
-    </>
-  );
+const iskCell = (amount: number, node: ReactNode = formatIsk(amount)): DataCell => ({
+  node,
+  sort: amount,
+  copy: formatPlain(amount),
+  title: formatIskExact(amount),
+});
+const NONE: DataCell = { node: "–", sort: null };
+
+/** The figure columns shared by the category and item views; `perUnit` adds average buy and sell. */
+function figureCells(figures: SaleFigures, perUnit = false): Record<string, DataCell> {
+  const matched = figures.matched > 0;
+  const share = margin(figures);
+  return {
+    sold: { node: units(figures.sold), sort: figures.sold, copy: String(figures.sold) },
+    ...(perUnit
+      ? {
+          avgBuy: matched ? iskCell(figures.cost / figures.matched) : NONE,
+          avgSell: iskCell(figures.revenue / figures.sold),
+        }
+      : {}),
+    sales: iskCell(figures.revenue),
+    cost: matched ? { ...iskCell(figures.cost, <Cost cost={figures.cost} estimated={figures.estimated} />), title: undefined } : NONE,
+    tax: figures.tax > 0 ? iskCell(figures.tax) : NONE,
+    profit: matched ? { ...iskCell(figures.profit, <Profit value={figures.profit} />), title: undefined, className: "font-medium" } : NONE,
+    margin: { node: <Margin figures={figures} />, sort: share, copy: share === null ? null : (share * 100).toFixed(1) },
+    unmatched:
+      figures.unmatched > 0
+        ? { node: <Unmatched figures={figures} />, sort: figures.unmatchedRevenue, copy: String(figures.unmatched) }
+        : NONE,
+  };
 }
+
+const FIGURE_COLUMNS: DataColumn[] = [
+  { key: "sales", label: "Sales" },
+  { key: "cost", label: "Cost" },
+  { key: "tax", label: "Sales tax" },
+  { key: "profit", label: "Profit" },
+  { key: "margin", label: "Margin" },
+  { key: "unmatched", label: "No purchase on record", title: "Units sold with no purchase on record, and what they sold for" },
+];
 
 /**
  * What was bought and has not sold yet, valued at what it cost and at EVE's average price. Some of
@@ -399,58 +421,68 @@ function Unsold({
       {holdings.length === 0 ? (
         <p className="text-sm text-muted">Everything bought or built in this view has sold or went into a job.</p>
       ) : (
-        <div className="max-h-96 overflow-auto rounded border border-border bg-surface">
-          <table className="w-full text-right text-sm whitespace-nowrap tabular-nums">
-            <thead className="sticky top-0 bg-surface text-xs text-muted">
-              <tr className="border-b border-border">
-                <th className="p-2 text-left font-normal">Item</th>
-                <th className="p-2 text-left font-normal">Category</th>
-                <th className="p-2 font-normal">Units</th>
-                <th className="p-2 font-normal">Avg cost</th>
-                <th className="p-2 font-normal">Cost</th>
-                <th className="p-2 font-normal" title="At EVE's average price for the item">
-                  Worth about
-                </th>
-                <th className="p-2 font-normal">Unrealised</th>
-                <th className="p-2 font-normal">Held since</th>
-                <th className="p-2 font-normal" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {holdings.map((h) => {
-                const days = Math.floor((now - h.oldest.getTime()) / DAY_MS);
-                return (
-                  <tr key={h.typeId}>
-                    <td className="max-w-72 truncate p-2 text-left" title={h.name}>
+        <DataTable
+          id="trade-unsold"
+          maxHeight="max-h-96"
+          searchPlaceholder="Search items"
+          columns={[
+            { key: "name", label: "Item", left: true },
+            { key: "category", label: "Category", left: true },
+            { key: "units", label: "Units" },
+            { key: "avgCost", label: "Avg cost" },
+            { key: "cost", label: "Cost" },
+            { key: "value", label: "Worth about", title: "At EVE's average price for the item" },
+            { key: "unrealised", label: "Unrealised" },
+            { key: "held", label: "Held since", firstDir: 1 },
+            { key: "action", label: "", menuLabel: "Not for trade button", sortable: false },
+          ]}
+          rows={holdings.map((h) => {
+            const days = Math.floor((now - h.oldest.getTime()) / DAY_MS);
+            const since = h.oldest.toISOString().slice(0, 10);
+            return {
+              key: h.typeId,
+              cells: {
+                name: {
+                  node: (
+                    <>
                       {h.name}
                       <Built built={h.built} of={h.quantity} />
-                    </td>
-                    <td className="p-2 text-left text-muted">{names[h.categoryId]}</td>
-                    <td className="p-2">{units(h.quantity)}</td>
-                    <td className="p-2">{formatIsk(h.cost / h.quantity)}</td>
-                    <td className="p-2">
-                      <Cost cost={h.cost} estimated={h.estimated} />
-                    </td>
-                    <td className="p-2">{h.value === null ? "–" : formatIsk(h.value)}</td>
-                    <td className="p-2">{h.value === null ? "–" : <Profit value={h.value - h.cost} />}</td>
-                    <td className={`p-2 ${days >= STALE_DAYS ? "text-amber-400" : ""}`} title={`Oldest unsold unit bought ${h.oldest.toISOString().slice(0, 10)}`}>
-                      {h.oldest.toISOString().slice(0, 10)} · {days}d
-                    </td>
-                    <td className="p-2">
-                      <form action={setNotForTrade.bind(null, h.typeId, true)}>
-                        <button className="text-xs text-muted hover:text-foreground" title="Bought to use, not to sell: leave it out of trade performance">
-                          Not for trade
-                        </button>
-                      </form>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </>
+                  ),
+                  sort: h.name,
+                  copy: h.name,
+                  search: h.built > 0 ? "built" : undefined,
+                  title: h.name,
+                  className: "max-w-72 truncate",
+                },
+                category: { node: names[h.categoryId], sort: names[h.categoryId] ?? null, copy: names[h.categoryId] ?? null, className: "text-muted" },
+                units: { node: units(h.quantity), sort: h.quantity, copy: String(h.quantity) },
+                avgCost: iskCell(h.cost / h.quantity),
+                cost: { ...iskCell(h.cost, <Cost cost={h.cost} estimated={h.estimated} />), title: undefined },
+                value: h.value === null ? NONE : iskCell(h.value),
+                unrealised: h.value === null ? NONE : { ...iskCell(h.value - h.cost, <Profit value={h.value - h.cost} />), title: undefined },
+                held: {
+                  node: `${since} · ${days}d`,
+                  sort: h.oldest.getTime(),
+                  copy: since,
+                  title: `Oldest unsold unit bought ${since}`,
+                  className: days >= STALE_DAYS ? "text-amber-400" : "",
+                },
+                action: {
+                  node: (
+                    <form action={setNotForTrade.bind(null, h.typeId, true)}>
+                      <button className="text-xs text-muted hover:text-foreground" title="Bought to use, not to sell: leave it out of trade performance">
+                        Not for trade
+                      </button>
+                    </form>
+                  ),
+                },
+              },
+            };
+          })}
+        />
       )}
-      <p className="text-xs text-muted">
+      <p className="max-w-5xl text-xs text-muted">
         Only market trades and industry jobs are seen: stock that was fitted, used, reprocessed, sold by contract or lost
         still shows here.
         Mark items you bought to use as <em>Not for trade</em> to leave them out of trade performance altogether.

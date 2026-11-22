@@ -6,13 +6,17 @@
 export type ColumnLayout<K extends string> = { order: K[]; hidden: K[] };
 
 /**
- * A saved layout made safe against the columns that exist now: unknown keys are dropped, columns
- * added since are put back where the default has them, and at least one column stays visible.
+ * A saved layout made safe against the columns that exist now: columns added since are put back
+ * where the default has them, and at least one column stays visible. Columns the saved layout knows
+ * but `defaults` lacks are dropped, unless `keepUnknown`: a table whose columns come and go with
+ * its filters keeps their place and visibility for when they come back.
  */
-export function normalizeLayout<K extends string>(saved: unknown, defaults: readonly K[]): ColumnLayout<K> {
+export function normalizeLayout<K extends string>(saved: unknown, defaults: readonly K[], options: { keepUnknown?: boolean } = {}): ColumnLayout<K> {
   const known = new Set<string>(defaults);
   const pick = (value: unknown): K[] =>
-    Array.isArray(value) ? [...new Set(value.filter((k): k is K => typeof k === "string" && known.has(k)))] : [];
+    Array.isArray(value)
+      ? [...new Set(value.filter((k): k is K => typeof k === "string" && (options.keepUnknown || known.has(k))))]
+      : [];
   const record = saved && typeof saved === "object" ? (saved as Record<string, unknown>) : {};
   const order = pick(record.order);
   for (const [i, key] of defaults.entries()) {
@@ -22,7 +26,7 @@ export function normalizeLayout<K extends string>(saved: unknown, defaults: read
     order.splice(before === undefined ? 0 : order.indexOf(before) + 1, 0, key);
   }
   const hidden = pick(record.hidden);
-  return { order, hidden: hidden.length >= order.length ? [] : hidden };
+  return { order, hidden: defaults.every((k) => hidden.includes(k)) ? [] : hidden };
 }
 
 /** `key` moved to where `target` is now (before it moving left, after it moving right). */

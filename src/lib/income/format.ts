@@ -19,3 +19,8 @@ export function formatBucket(day: string, grouping: "day" | "week" | "month"): s
   const month = MONTHS[Number(day.slice(5, 7)) - 1];
   return grouping === "month" ? `${month} ${day.slice(0, 4)}` : `${month} ${Number(day.slice(8, 10))}`;
 }
+
+/** A number as it pastes into EVE's price and quantity boxes: no separators, at most two decimals. */
+export function formatPlain(value: number): string {
+  return String(Math.round(value * 100) / 100);
+}

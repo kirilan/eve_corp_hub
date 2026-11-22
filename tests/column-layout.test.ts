@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { moveColumn, normalizeLayout, stepColumn, toggleColumn } from "@/components/income/column-layout";
+import { moveColumn, normalizeLayout, stepColumn, toggleColumn } from "@/components/data-table/column-layout";
 
 const DEFAULTS = ["status", "corp", "item", "price", "expires"] as const;
 type Key = (typeof DEFAULTS)[number];
@@ -14,6 +14,13 @@ describe("column layout", () => {
     expect(normalizeLayout({ order: ["price", "gone", "status", "item", "expires"], hidden: ["item", "gone"] }, DEFAULTS)).toEqual({
       order: ["price", "status", "corp", "item", "expires"],
       hidden: ["item"],
+    });
+  });
+
+  it("keeps columns absent from this view when asked, for tables whose columns follow filters", () => {
+    expect(normalizeLayout({ order: ["price", "fees", "status"], hidden: ["fees"] }, DEFAULTS, { keepUnknown: true })).toEqual({
+      order: ["price", "expires", "fees", "status", "corp", "item"],
+      hidden: ["fees"],
     });
   });
 

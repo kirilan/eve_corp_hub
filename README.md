@@ -21,11 +21,12 @@ profile can see follows its **main character's corporation**.
   contract sales, rewards) with the taxes and fees on it, across all your characters. Click a
   column to see where it came from. Trade performance shows which items you traded at a profit
   or a loss, from what you paid for them, and what you bought and have not sold yet; open market
-  orders show whether each is still the lowest sell or highest buy, sortable by any column (and
-  columns can be hidden or dragged into another order, remembered in your browser; a click
-  on a cell copies it, prices as plain numbers to paste in game), with
-  *Sync now* to read them and their order books again on demand. Only you see it, except that
-  characters that share orders with their corp flag when a corp member is the one ahead.
+  orders show whether each is still the lowest sell or highest buy, with *Sync now* to read them
+  and their order books again on demand. Every table on the page sorts by any column, searches
+  across all of them, and lets you hide columns or drag them into another order (remembered in
+  your browser, per table); a click on a cell copies it, prices as plain numbers to paste in game.
+  Only you see it, except that characters that share orders with their corp flag when a corp
+  member is the one ahead.
 - **Reprocess or sell**: paste a list of items to see what they bring in Jita or 4-HWWF, sold as
   they are or reprocessed with and without your skills, after taxes and fees, which way pays
   more for each, and roughly how long it takes to sell.

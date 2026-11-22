@@ -6,7 +6,8 @@ import { type ChartSeries, IncomeChart } from "@/components/income/income-chart"
 import { SignInButton } from "@/components/sign-in-button";
 import { getViewer } from "@/lib/auth/viewer";
 import { entityNames, portraitUrl } from "@/lib/eve/names";
-import { formatBucket, formatIsk, formatIskExact } from "@/lib/income/format";
+import { type DataCell, DataTable } from "@/components/data-table/data-table";
+import { formatBucket, formatIsk, formatIskExact, formatPlain } from "@/lib/income/format";
 import {
   type Bucket,
   type Filters,
@@ -39,7 +40,8 @@ const RANGE_LABELS: Record<Range, string> = { "7d": "7 days", "30d": "30 days", 
 
 export default function IncomePage({ searchParams }: PageProps<"/income">) {
   return (
-    <div className="space-y-6">
+    // Wide tables (trades, holdings, open orders) use the whole screen; notes stay at reading width.
+    <div className="breakout space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Personal income</h1>
         <p className="mt-1 max-w-2xl text-sm text-muted">
@@ -246,47 +248,46 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
           <p className="py-16 text-center text-sm text-muted">No income in this range.</p>
         )}
         {(earning.includes("market") || earning.includes("contracts")) && (
-          <p className="text-xs text-muted">
+          <p className="max-w-5xl text-xs text-muted">
             {filters.expenses
               ? "Market and contract sales are what buyers paid, with sales tax and broker fees below the line. What you bought is not subtracted, so net market income is turnover after fees, not profit."
               : "Market and contract sales are what buyers paid: sales tax, broker fees and your own purchases are not subtracted, so they show turnover rather than profit."}
           </p>
         )}
         {historyStart && report.from < historyStart.toISOString().slice(0, 10) && (
-          <p className="text-xs text-muted">
+          <p className="max-w-5xl text-xs text-muted">
             History starts {historyStart.toISOString().slice(0, 10)}: 30 days before the first character began tracking.
           </p>
         )}
         <details className="text-sm">
           <summary className="cursor-pointer text-muted hover:text-foreground">Data table</summary>
-          <div className="mt-2 max-h-80 overflow-auto">
-            <table className="w-full text-right tabular-nums">
-              <thead className="sticky top-0 bg-surface text-xs text-muted">
-                <tr>
-                  <th className="py-1 text-left font-normal">{filters.grouping === "week" ? "Week of" : filters.grouping === "month" ? "Month" : "Day"}</th>
-                  {series.map((s) => (
-                    <th key={s.id} className="px-2 py-1 font-normal">
-                      {s.label}
-                      {s.expense && filters.stack === "character" ? " (expenses)" : ""}
-                    </th>
-                  ))}
-                  <th className="py-1 font-normal">{spent ? "Net" : "Total"}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {chartBuckets.map((bucket) => (
-                  <tr key={bucket.key}>
-                    <td className="py-1 text-left">{bucket.key}</td>
-                    {bucket.values.map((value, i) => (
-                      <td key={series[i].id} className="px-2 py-1">
-                        {value ? formatIsk(series[i].expense ? -value : value) : "–"}
-                      </td>
-                    ))}
-                    <td className="py-1">{formatIsk(bucket.values.reduce((sum, value, i) => sum + (series[i].expense ? -value : value), 0))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-2">
+            <DataTable
+              id="income-buckets"
+              maxHeight="max-h-80"
+              searchPlaceholder="Search periods"
+              columns={[
+                { key: "period", label: filters.grouping === "week" ? "Week of" : filters.grouping === "month" ? "Month" : "Day", left: true, firstDir: -1 },
+                ...series.map((s) => ({ key: `s:${s.id}`, label: `${s.label}${s.expense && filters.stack === "character" ? " (expenses)" : ""}` })),
+                { key: "total", label: spent ? "Net" : "Total" },
+              ]}
+              rows={chartBuckets.map((bucket) => {
+                const total = bucket.values.reduce((sum, value, i) => sum + (series[i].expense ? -value : value), 0);
+                return {
+                  key: bucket.key,
+                  cells: {
+                    period: { node: bucket.key, sort: bucket.key, copy: bucket.key },
+                    ...Object.fromEntries(
+                      bucket.values.map((value, i) => {
+                        const signed = series[i].expense ? -value : value;
+                        return [`s:${series[i].id}`, { node: value ? formatIsk(signed) : "–", sort: value ? signed : null, copy: value ? formatPlain(signed) : null, title: value ? formatIskExact(signed) : undefined }];
+                      }),
+                    ),
+                    total: { node: formatIsk(total), sort: total, copy: formatPlain(total), title: formatIskExact(total) },
+                  },
+                };
+              })}
+            />
           </div>
         </details>
       </section>
@@ -304,82 +305,79 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
 
       <section className="space-y-3">
         <h2 className="font-medium">Per character</h2>
-        <div className="overflow-x-auto rounded border border-border bg-surface">
-          <table className="w-full text-right text-sm whitespace-nowrap tabular-nums">
-            <thead className="text-xs text-muted">
-              <tr className="border-b border-border">
-                <th className="p-2 text-left font-normal">Character</th>
-                <th className="p-2 font-normal">{filters.expenses ? "Income" : "Total"}</th>
-                <th className="p-2 font-normal">Share</th>
-                {filters.expenses && (
-                  <>
-                    <th className="p-2 font-normal">Taxes &amp; fees</th>
-                    <th className="p-2 font-normal">Net</th>
-                  </>
-                )}
-                {earning.map((s) => (
-                  <th key={s} className="p-2 font-normal">
-                    {SOURCE_LABELS[s]}
-                  </th>
-                ))}
-                <th className="p-2 font-normal">Active days</th>
-                <th className="p-2 font-normal">Per active day</th>
-                {ratting && (
-                  <th className="p-2 font-normal" title="Estimated from bounty payouts: bounties pay every 20 minutes while ratting, so hours with a payout approximate time spent.">
-                    Bounties / hour*
-                  </th>
-                )}
-                <th className="p-2 font-normal">Best day</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {report.characters.map((c) => (
-                <tr key={c.characterId}>
-                  <td className="p-2 text-left">
+        <DataTable
+          id="income-characters"
+          searchPlaceholder="Search characters"
+          empty="No income from the selected characters in this range."
+          defaultSort={{ key: "amount", dir: -1 }}
+          columns={[
+            { key: "character", label: "Character", left: true },
+            { key: "amount", label: filters.expenses ? "Income" : "Total" },
+            { key: "share", label: "Share" },
+            ...(filters.expenses
+              ? [
+                  { key: "expenses", label: "Taxes & fees" },
+                  { key: "net", label: "Net" },
+                ]
+              : []),
+            ...earning.map((s) => ({ key: `src:${s}`, label: SOURCE_LABELS[s] })),
+            { key: "activeDays", label: "Active days" },
+            { key: "perDay", label: "Per active day" },
+            ...(ratting
+              ? [
+                  {
+                    key: "bountyHour",
+                    label: "Bounties / hour*",
+                    title: "Estimated from bounty payouts: bounties pay every 20 minutes while ratting, so hours with a payout approximate time spent",
+                  },
+                ]
+              : []),
+            { key: "bestDay", label: "Best day" },
+          ]}
+          rows={report.characters.map((c) => {
+            const name = byId.get(c.characterId)?.name ?? String(c.characterId);
+            const isk = (amount: number | null, extra: Partial<DataCell> = {}): DataCell =>
+              amount === null || amount === 0
+                ? { node: "–", sort: null }
+                : { node: formatIsk(amount), sort: amount, copy: formatPlain(amount), title: formatIskExact(amount), ...extra };
+            const perDay = c.activeDays ? c.amount / c.activeDays : null;
+            const perHour = c.bountyHours ? c.bySource.bounties / c.bountyHours : null;
+            return {
+              key: c.characterId,
+              cells: {
+                character: {
+                  node: (
                     <Link
                       href={hrefWith(filters, { characterIds: [c.characterId] })}
                       scroll={false}
-                      className="flex items-center gap-2 hover:text-accent"
+                      className="inline-flex items-center gap-2 hover:text-accent"
                       title="Show only this character"
                     >
                       <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ background: colorOf(c.characterId) }} />
                       <Image src={portraitUrl(c.characterId, 32)} alt="" width={20} height={20} unoptimized className="shrink-0 rounded" />
-                      {byId.get(c.characterId)?.name ?? c.characterId}
+                      {name}
                     </Link>
-                  </td>
-                  <td className="p-2 font-medium" title={formatIskExact(c.amount)}>
-                    {formatIsk(c.amount)}
-                  </td>
-                  <td className="p-2">{totals.amount > 0 ? `${((c.amount / totals.amount) * 100).toFixed(0)}%` : "–"}</td>
-                  {filters.expenses && (
-                    <>
-                      <td className="p-2">{c.expenses ? formatIsk(-c.expenses) : "–"}</td>
-                      <td className="p-2 font-medium">{formatIsk(c.amount - c.expenses)}</td>
-                    </>
-                  )}
-                  {earning.map((s) => (
-                    <td key={s} className="p-2">
-                      {c.bySource[s] ? formatIsk(c.bySource[s]) : "–"}
-                    </td>
-                  ))}
-                  <td className="p-2">{c.activeDays}</td>
-                  <td className="p-2">{c.activeDays ? formatIsk(c.amount / c.activeDays) : "–"}</td>
-                  {ratting && <td className="p-2">{c.bountyHours ? formatIsk(c.bySource.bounties / c.bountyHours) : "–"}</td>}
-                  <td className="p-2">{c.bestDay ? `${formatIsk(c.bestDay.amount)} · ${formatBucket(c.bestDay.day, "day")}` : "–"}</td>
-                </tr>
-              ))}
-              {report.characters.length === 0 && (
-                <tr>
-                  <td colSpan={6 + earning.length + (ratting ? 1 : 0) + (filters.expenses ? 2 : 0)} className="p-4 text-center text-muted">
-                    No income from the selected characters in this range.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                  ),
+                  sort: name,
+                  copy: name,
+                },
+                amount: isk(c.amount, { className: "font-medium" }),
+                share: totals.amount > 0 ? { node: `${((c.amount / totals.amount) * 100).toFixed(0)}%`, sort: c.amount / totals.amount, copy: ((c.amount / totals.amount) * 100).toFixed(1) } : { node: "–" },
+                expenses: isk(c.expenses ? -c.expenses : null),
+                net: isk(c.amount - c.expenses, { className: "font-medium" }),
+                ...Object.fromEntries(earning.map((s) => [`src:${s}`, isk(c.bySource[s] || null)])),
+                activeDays: { node: c.activeDays, sort: c.activeDays, copy: String(c.activeDays) },
+                perDay: isk(perDay),
+                bountyHour: isk(perHour),
+                bestDay: c.bestDay
+                  ? { node: `${formatIsk(c.bestDay.amount)} · ${formatBucket(c.bestDay.day, "day")}`, sort: c.bestDay.amount, copy: formatPlain(c.bestDay.amount), search: c.bestDay.day }
+                  : { node: "–" },
+              },
+            };
+          })}
+        />
         {ratting && (
-          <p className="text-xs text-muted">
+          <p className="max-w-5xl text-xs text-muted">
             * Bounties pay out every 20 minutes while you rat, so hours with at least one payout approximate time spent
             ratting. Only bounties count towards the hourly rate.
           </p>
@@ -388,7 +386,7 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
 
       {trading && <Trading userId={viewer.userId} filters={filters} from={report.from} to={report.to} />}
 
-      <section id="orders" className="breakout scroll-mt-4 space-y-3">
+      <section id="orders" className="scroll-mt-4 space-y-3">
         <h2 className="font-medium">Open market orders</h2>
         <Suspense fallback={<p className="text-sm text-muted">Reading orders and their markets…</p>}>
           <OpenOrders userId={viewer.userId} characterIds={filters.characterIds} colorOf={colorOf} />
@@ -409,7 +407,7 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
               </li>
             ))}
           </ul>
-          <p className="text-xs text-muted">
+          <p className="max-w-5xl text-xs text-muted">
             Corporation tax is withheld from bounties, missions and rewards before they reach the wallet. Broker fees
             are charged when an order is placed or changed, whether or not it sells. Industry and planetary costs are
             not tracked.
@@ -431,7 +429,7 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
               </li>
             ))}
           </ol>
-          <p className="text-xs text-muted">Bounties only: other income does not say where it was earned.</p>
+          <p className="max-w-5xl text-xs text-muted">Bounties only: other income does not say where it was earned.</p>
         </section>
       )}
 
@@ -468,7 +466,7 @@ async function Income({ searchParams }: { searchParams: Promise<Params> }) {
             </li>
           ))}
         </ul>
-        <p className="text-xs text-muted">
+        <p className="max-w-5xl text-xs text-muted">
           Updated when you open this page (at most hourly, as EVE refreshes wallet data hourly) and once a day for every
           tracking character. Turn tracking on or off on <Link href="/characters" className="text-accent hover:underline">Characters</Link>.
         </p>
