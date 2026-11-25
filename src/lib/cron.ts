@@ -8,6 +8,7 @@ import vercel from "../../vercel.json";
 const JOB_NAMES: Record<string, string> = {
   "/api/cron/income": "Wallet sync",
   "/api/cron/pvp-fits": "Top PvP fits",
+  "/api/cron/pvp-comps": "Fleet comps data",
 };
 
 // Runs are kept this long: plenty to spot a pattern, small enough never to matter.

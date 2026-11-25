@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   doublePrecision,
   bigserial,
   foreignKey,
@@ -563,6 +564,28 @@ export const pvpShipKills = pgTable(
     foreignKey({ columns: [t.crawlId, t.characterId], foreignColumns: [pvpPilots.crawlId, pvpPilots.characterId] }).onDelete("cascade"),
   ],
 );
+
+/**
+ * The UTC days of zKillboard's bulk dumps (R2Z2) the fleet comps pipeline has read, one row per day,
+ * from `src/lib/pvp/comps/sync.ts`. A day is read again when zKillboard reports a different killmail
+ * count for it (late killmails) or when the pipeline's `version` changes. Public game data.
+ */
+export const pvpCompDays = pgTable("pvp_comp_days", {
+  day: date("day", { mode: "string" }).primaryKey(),
+  // Killmails in the day's file as read.
+  killmails: integer("killmails").notNull(),
+  // The day's count in zKillboard's totals.json when it was read (null if it had none). A day is read
+  // again when that count changes: it can differ from the file's for good, by a few, so the file's own
+  // count cannot be the test.
+  reported: integer("reported"),
+  // Of those, the ones that can say anything about small-gang PvP (see `comps/filter.ts`).
+  kept: integer("kept").notNull(),
+  // The pipeline version that read it; a day read by an older one is read again.
+  version: integer("version").notNull(),
+  processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
+  // Download, parse and processing together.
+  durationMs: integer("duration_ms").notNull(),
+});
 
 export type User = typeof users.$inferSelect;
 export type Character = typeof characters.$inferSelect;

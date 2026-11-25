@@ -8,6 +8,7 @@ import type { Viewer } from "@/lib/auth/accounts";
 import { jobName, recordCronRun, runState } from "@/lib/cron";
 import { syncAllIncome } from "@/lib/income/sync";
 import { canRunCronJobs } from "@/lib/permissions";
+import { syncCompDays } from "@/lib/pvp/comps/sync";
 import { crawlPvpFits } from "@/lib/pvp/crawl";
 import { PVP_FITS_TAG } from "@/lib/pvp/fits";
 
@@ -28,6 +29,7 @@ const JOBS: Record<string, (budgetMs: number) => Promise<Record<string, unknown>
     revalidateTag(PVP_FITS_TAG, { expire: 0 });
     return result;
   },
+  "/api/cron/pvp-comps": (budgetMs) => syncCompDays(budgetMs),
 };
 
 export class CronJobError extends Error {}

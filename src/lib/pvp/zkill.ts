@@ -21,17 +21,26 @@ export class ZkillError extends Error {}
 
 let lastRequest = 0;
 
-async function get(path: string, accept: string, signal?: AbortSignal): Promise<Response> {
+/**
+ * One request to any zKillboard host (the site, or its R2Z2 bulk files), paced and identified like every
+ * other: whatever the status, the response comes back for the caller to judge. Only a request that got no
+ * answer at all (network failure, timeout) throws. `timeoutMs` covers reading the body too.
+ */
+export async function zkillFetch(url: string, accept: string, signal?: AbortSignal, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
   const wait = lastRequest + PAUSE_MS - Date.now();
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   lastRequest = Date.now();
-  const response = await fetch(BASE + path, {
+  return fetch(url, {
     headers: { Accept: accept, "User-Agent": `Drydock (${env().APP_URL}; ${env().ESI_CONTACT})` },
-    signal: deadlineSignal(REQUEST_TIMEOUT_MS, signal),
+    signal: deadlineSignal(timeoutMs, signal),
     cache: "no-store",
   }).catch((error: unknown) => {
-    throw new ZkillError(`zKillboard ${path} did not answer: ${error instanceof Error ? error.message : String(error)}`);
+    throw new ZkillError(`zKillboard ${url} did not answer: ${error instanceof Error ? error.message : String(error)}`);
   });
+}
+
+async function get(path: string, accept: string, signal?: AbortSignal): Promise<Response> {
+  const response = await zkillFetch(BASE + path, accept, signal);
   if (!response.ok) throw new ZkillError(`zKillboard ${path} failed (${response.status})`);
   return response;
 }

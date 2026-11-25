@@ -17,7 +17,8 @@
     "vercel-build": "tsx scripts/migrate.mts --deploy && next build",
     "sde:materials": "tsx scripts/sde-materials.mts",
     "sde:blueprints": "tsx scripts/sde-blueprints.mts",
-    "sde:traits": "tsx scripts/sde-traits.mts"
+    "sde:traits": "tsx scripts/sde-traits.mts",
+    "sde:pvp": "tsx scripts/sde-pvp.mts"
   },
   "dependencies": {
     "@vercel/functions": "3.10.1",
