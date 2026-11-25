@@ -203,8 +203,8 @@ they come from the SDE into `src/lib/fittings/ship-traits.json`; regenerate it a
 ## Fleet comps data (in progress)
 
 Groundwork for a page of small-gang fleet comps (3 to 7 pilots) learned from zKillboard's killmails;
-the spec is the "Small-gang fleet comps" doc. So far the pipeline reads and filters the data; fights,
-sides and the page come next.
+the spec is the "Small-gang fleet comps" doc. The pipeline turns each day into fight sides and saves
+each month's comps; the page comes next.
 
 - **Source**: zKillboard's bulk daily dumps (R2Z2, `src/lib/pvp/comps/r2z2.ts`): one file per UTC day
   with every killmail (`history/raw/YYYYMMDD.json`, 3 to 7 MB compressed, 26 to 70 MB of JSON), and
@@ -221,8 +221,27 @@ sides and the page come next.
   until its budget runs out: every day from 2026-08-01 to yesterday not yet read (or read by an older
   `COMPS_VERSION`), oldest first, then up to 3 days of the last 40 whose count in `totals.json` changed
   (late killmails). Each day read is a row in `pvp_comp_days` (count, kept, version, time taken). The
-  busiest day reads in about 1.5 s, so the first backfill takes about two runs; the health panel's
-  result line shows the days still pending.
+  busiest day reads and processes in about 1.5 s, so the first backfill (116 days) fits in one run of
+  about two minutes; the health panel's result line shows the days still pending.
+- **Fights and sides** (`comps/fights.ts`, pure): each loss is priced at ESI average prices (the SDE base
+  price where ESI has none): hull, modules, rigs, drones and loaded charges, not cargo. Kills in one
+  system within 15 minutes of each other are a fight; groups (alliance, else corporation, else the
+  pilot) that shoot the same target are a side. A fight still going at midnight is carried over in
+  `pvp_comp_days.carry` and finished by the next day's run, so every fight is stored once, under the id
+  and day of its first kill. Stored per day: sides of 3 to 12 pilots (`pvp_comp_sides`), fits under 1B
+  with no officer, deadspace or abyssal module lost by fair, winning sides of 3 to 7 (`pvp_comp_fits`),
+  and losses per hull with how many cost 1B or less (`pvp_comp_hull_losses`). Reading a day again
+  replaces what its run stored; if that changes what went past midnight, the next day is read again too.
+- **Scoring** (`comps/score.ts`, pure): a fair fight has an enemy (all other sides together) of at least
+  half our pilots and at least 2; a win destroys more ISK than it loses. A side counts only if each of
+  its hulls is affordable: at least half its losses in the period cost 1B or less. Mixes (pilots per
+  role, `comps/roles.ts`) and hulls need 30 fair fights and rank by the low end of the 95% Wilson
+  interval; logi hulls are listed by appearances, since logi lands on killmails mainly when it dies.
+  The growth path takes the best 3-pilot mix, then at each size the best mix that adds one pilot to the
+  last, else that size's best (a swap).
+- **Months and retention** (`comps/months.ts`): a calendar month is saved in `pvp_comp_months` once all
+  its days and the next month's first are read (from 2026-08 on). Side, fit and loss rows are deleted
+  at 40 days old, never before their month is saved: about 25 MB at rest.
 
 ## Personal income
 
@@ -448,7 +467,7 @@ src/lib/audit.ts                       audit log writes (in-transaction) and sco
 src/lib/doctrines.ts                   doctrines and their fits
 src/lib/pvp/                           top PvP fits: zKillboard client, weekly crawl, killmail-to-fit (pure)
 src/app/(fittings)/doctrines/top       a top PvP fit's page; api/cron/pvp-fits is its weekly crawl
-src/lib/pvp/comps/                     fleet comps pipeline: R2Z2 client, static data, filter, day planner, daily job
+src/lib/pvp/comps/                     fleet comps pipeline: R2Z2 client, static data, filter, day planner, fights, scoring, months, daily job
 src/lib/auth/super-users.ts            super user flag and the admin profile list
 src/app/admin                          super user admin page, audit log and health panel
 src/lib/{cron,health}.ts               cron run recording and schedules; health panel figures

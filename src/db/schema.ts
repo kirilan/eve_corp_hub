@@ -1,4 +1,6 @@
 import { sql } from "drizzle-orm";
+import type { CompKill } from "@/lib/pvp/comps/fights";
+import type { CompResults } from "@/lib/pvp/comps/score";
 import {
   bigint,
   boolean,
@@ -15,6 +17,7 @@ import {
   pgTable,
   primaryKey,
   real,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -585,6 +588,83 @@ export const pvpCompDays = pgTable("pvp_comp_days", {
   processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
   // Download, parse and processing together.
   durationMs: integer("duration_ms").notNull(),
+  // Kills of fights still going at midnight, which the next day's run finishes. Cleared once the day
+  // is too old to be read again.
+  carry: jsonb("carry").$type<CompKill[]>(),
+});
+
+/**
+ * One side of one fight, of 3 to 12 pilots, from the fleet comps pipeline (`comps/fights.ts`). Kept
+ * 40 days, and never deleted before the month of its fight is saved in `pvpCompMonths`.
+ */
+export const pvpCompSides = pgTable(
+  "pvp_comp_sides",
+  {
+    // The fight's first killmail.
+    fightId: eveId("fight_id").notNull(),
+    side: smallint("side").notNull(),
+    // The UTC day of the fight's first kill.
+    day: date("day", { mode: "string" }).notNull(),
+    // The day whose run stored it: a fight going past midnight is stored by the next day's run, and a
+    // day read again replaces what its run stored.
+    processedDay: date("processed_day", { mode: "string" }).notNull(),
+    systemId: eveId("system_id").notNull(),
+    pilots: smallint("pilots").notNull(),
+    // Pilots of every other side in the fight together.
+    enemies: smallint("enemies").notNull(),
+    iskKilled: doublePrecision("isk_killed").notNull(),
+    iskLost: doublePrecision("isk_lost").notNull(),
+    // One hull per pilot whose hull is known: the one they lost, else the one they flew most.
+    hulls: integer("hulls").array().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.fightId, t.side] }), index("pvp_comp_sides_day_idx").on(t.day), index("pvp_comp_sides_processed_idx").on(t.processedDay)],
+);
+
+/**
+ * Fits the comps may suggest (under 1B, no officer, deadspace or abyssal module) lost by fair, winning
+ * sides of 3 to 7 pilots. Items are in the shape `fittings.items` uses. Kept like `pvpCompSides`.
+ */
+export const pvpCompFits = pgTable(
+  "pvp_comp_fits",
+  {
+    killmailId: eveId("killmail_id").primaryKey(),
+    fightId: eveId("fight_id").notNull(),
+    side: smallint("side").notNull(),
+    day: date("day", { mode: "string" }).notNull(),
+    processedDay: date("processed_day", { mode: "string" }).notNull(),
+    characterId: eveId("character_id").notNull(),
+    shipTypeId: eveId("ship_type_id").notNull(),
+    items: jsonb("items").$type<FittingItem[]>().notNull(),
+    // What makes two losses the same fit (`loadoutKey`).
+    loadout: text("loadout").notNull(),
+    // Hull and fit at ESI average prices, in ISK.
+    value: doublePrecision("value").notNull(),
+  },
+  (t) => [index("pvp_comp_fits_day_idx").on(t.day), index("pvp_comp_fits_processed_idx").on(t.processedDay)],
+);
+
+/**
+ * Losses per hull per UTC day of the kills the comps pipeline keeps, for the 1B cap: a hull is
+ * affordable when at least half its losses in the period cost 1B or less. Kept like `pvpCompSides`.
+ */
+export const pvpCompHullLosses = pgTable(
+  "pvp_comp_hull_losses",
+  {
+    day: date("day", { mode: "string" }).notNull(),
+    shipTypeId: eveId("ship_type_id").notNull(),
+    losses: integer("losses").notNull(),
+    // Of those, the ones that cost 1B or less, hull and fit.
+    affordable: integer("affordable").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.shipTypeId] })],
+);
+
+/** The comps of each calendar month, saved for good once the month is complete. */
+export const pvpCompMonths = pgTable("pvp_comp_months", {
+  // The month's first day.
+  month: date("month", { mode: "string" }).primaryKey(),
+  results: jsonb("results").$type<CompResults>().notNull(),
+  savedAt: timestamp("saved_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type User = typeof users.$inferSelect;

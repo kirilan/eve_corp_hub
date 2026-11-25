@@ -1,5 +1,5 @@
 {
-  "id": "3f281292-d91d-4791-b3d9-bff820ffc34e",
+  "id": "8b554d8c-b2eb-42cd-a2d8-78eae43ce76b",
   "prevId": "38bb4c42-483c-4e9a-90ac-6826a2e49a78",
   "version": "7",
   "dialect": "postgresql",
@@ -1386,11 +1386,310 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
+        },
+        "carry": {
+          "name": "carry",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.pvp_comp_fits": {
+      "name": "pvp_comp_fits",
+      "schema": "",
+      "columns": {
+        "killmail_id": {
+          "name": "killmail_id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "fight_id": {
+          "name": "fight_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "side": {
+          "name": "side",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "day": {
+          "name": "day",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "processed_day": {
+          "name": "processed_day",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "character_id": {
+          "name": "character_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ship_type_id": {
+          "name": "ship_type_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "items": {
+          "name": "items",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "loadout": {
+          "name": "loadout",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "pvp_comp_fits_day_idx": {
+          "name": "pvp_comp_fits_day_idx",
+          "columns": [
+            {
+              "expression": "day",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "pvp_comp_fits_processed_idx": {
+          "name": "pvp_comp_fits_processed_idx",
+          "columns": [
+            {
+              "expression": "processed_day",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.pvp_comp_hull_losses": {
+      "name": "pvp_comp_hull_losses",
+      "schema": "",
+      "columns": {
+        "day": {
+          "name": "day",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ship_type_id": {
+          "name": "ship_type_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "losses": {
+          "name": "losses",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "affordable": {
+          "name": "affordable",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "pvp_comp_hull_losses_day_ship_type_id_pk": {
+          "name": "pvp_comp_hull_losses_day_ship_type_id_pk",
+          "columns": [
+            "day",
+            "ship_type_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.pvp_comp_months": {
+      "name": "pvp_comp_months",
+      "schema": "",
+      "columns": {
+        "month": {
+          "name": "month",
+          "type": "date",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "results": {
+          "name": "results",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "saved_at": {
+          "name": "saved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.pvp_comp_sides": {
+      "name": "pvp_comp_sides",
+      "schema": "",
+      "columns": {
+        "fight_id": {
+          "name": "fight_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "side": {
+          "name": "side",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "day": {
+          "name": "day",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "processed_day": {
+          "name": "processed_day",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "system_id": {
+          "name": "system_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pilots": {
+          "name": "pilots",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "enemies": {
+          "name": "enemies",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "isk_killed": {
+          "name": "isk_killed",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "isk_lost": {
+          "name": "isk_lost",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hulls": {
+          "name": "hulls",
+          "type": "integer[]",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "pvp_comp_sides_day_idx": {
+          "name": "pvp_comp_sides_day_idx",
+          "columns": [
+            {
+              "expression": "day",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "pvp_comp_sides_processed_idx": {
+          "name": "pvp_comp_sides_processed_idx",
+          "columns": [
+            {
+              "expression": "processed_day",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "pvp_comp_sides_fight_id_side_pk": {
+          "name": "pvp_comp_sides_fight_id_side_pk",
+          "columns": [
+            "fight_id",
+            "side"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
