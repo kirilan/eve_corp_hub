@@ -200,11 +200,14 @@ game's Traits tab lists them: per skill level, role and misc bonuses. ESI does n
 they come from the SDE into `src/lib/fittings/ship-traits.json`; regenerate it after a patch with
 `pnpm sde:traits <folder>` (see the script for which files it needs).
 
-## Fleet comps data (in progress)
+## Small-gang fleet comps
 
-Groundwork for a page of small-gang fleet comps (3 to 7 pilots) learned from zKillboard's killmails;
-the spec is the "Small-gang fleet comps" doc. The pipeline turns each day into fight sides and saves
-each month's comps; the page comes next.
+`/doctrines/comps` (public, linked from /doctrines) shows what to fly with 3 to 7 pilots, learned from
+zKillboard's killmails: a growth path from 3 to 7 pilots, every role mix with enough fair fights per gang
+size, and hulls per role with an example fit to save or send to a character
+(`/doctrines/comps/fit/<killmail>`). It shows the last 30 days read, or a saved month (`?month=YYYY-MM`).
+Data comes from `comps/view.ts`, cached under `pvp-comps` until the daily job runs. The spec is the
+"Small-gang fleet comps" doc.
 
 - **Source**: zKillboard's bulk daily dumps (R2Z2, `src/lib/pvp/comps/r2z2.ts`): one file per UTC day
   with every killmail (`history/raw/YYYYMMDD.json`, 3 to 7 MB compressed, 26 to 70 MB of JSON), and
@@ -467,7 +470,7 @@ src/lib/audit.ts                       audit log writes (in-transaction) and sco
 src/lib/doctrines.ts                   doctrines and their fits
 src/lib/pvp/                           top PvP fits: zKillboard client, weekly crawl, killmail-to-fit (pure)
 src/app/(fittings)/doctrines/top       a top PvP fit's page; api/cron/pvp-fits is its weekly crawl
-src/lib/pvp/comps/                     fleet comps pipeline: R2Z2 client, static data, filter, day planner, fights, scoring, months, daily job
+src/lib/pvp/comps/                     fleet comps pipeline: R2Z2 client, static data, filter, day planner, fights, scoring, months, daily job, page data
 src/lib/auth/super-users.ts            super user flag and the admin profile list
 src/app/admin                          super user admin page, audit log and health panel
 src/lib/{cron,health}.ts               cron run recording and schedules; health panel figures

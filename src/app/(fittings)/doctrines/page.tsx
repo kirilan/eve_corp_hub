@@ -24,6 +24,12 @@ export default function DoctrinesPage({ searchParams }: PageProps<"/doctrines">)
       <Suspense fallback={<p className="text-muted">Loading…</p>}>
         <Doctrines />
       </Suspense>
+      <Link href="/doctrines/comps" className="block rounded border border-border bg-surface px-4 py-3 hover:border-accent">
+        <span className="font-medium">Small-gang comps</span>
+        <span className="mt-0.5 block text-sm text-muted">
+          What to fly with 3 to 7 pilots: the role mixes and hulls that win fair fights outside highsec, under 1B a ship. →
+        </span>
+      </Link>
       <Suspense fallback={<p className="text-muted">Loading top PvP fits…</p>}>
         <TopPvpFits searchParams={searchParams} />
       </Suspense>

@@ -14,6 +14,8 @@ import { isBannedModule, isHighsec, isHull, pvpType, systemSecurity } from "@/li
 const r2z2 = vi.hoisted(() => ({ r2z2Totals: vi.fn(), r2z2Day: vi.fn() }));
 vi.mock("@/lib/pvp/comps/r2z2", () => r2z2);
 vi.mock("@/lib/pvp/comps/prices", () => ({ compPrices: vi.fn(async () => new Map()) }));
+vi.mock("next/cache", () => ({ cacheLife: () => {}, cacheTag: () => {}, io: async () => {} }));
+vi.mock("@/lib/eve/types", () => ({ typeNames: vi.fn(async (ids: number[]) => new Map(ids.map((id) => [id, `Type ${id}`]))) }));
 
 const { syncCompDays } = await import("@/lib/pvp/comps/sync");
 
@@ -466,5 +468,28 @@ describe("syncCompDays with fights", () => {
       ["2026-08-01", "2026-08-02", 4],
     ]);
     expect(await syncCompDays(240_000, now)).toMatchObject({ days: 0 });
+  });
+});
+
+describe("comps page data", () => {
+  beforeEach(async () => {
+    await db.execute(sql`TRUNCATE pvp_comp_days, pvp_comp_sides, pvp_comp_fits, pvp_comp_hull_losses, pvp_comp_months`);
+    r2z2.r2z2Totals.mockReset().mockResolvedValue(new Map());
+    r2z2.r2z2Day.mockReset().mockImplementation(async (day: string) => (day === "2026-08-20" ? recordedOn("2026-08-20T10:00:00Z") : []));
+  });
+
+  it("lists saved months, reads the live window and a month, and finds a fit in either", async () => {
+    const { compFit, compMonths, liveComps, monthComps } = await import("@/lib/pvp/comps/view");
+    await syncCompDays(240_000, new Date("2026-09-02T07:00:00Z"));
+    expect(await compMonths()).toEqual(["2026-08"]);
+    const live = await liveComps("2026-09-02");
+    expect(live).toMatchObject({ from: "2026-08-03", to: "2026-09-01", results: { sides: 1, overCap: 1 } });
+    expect(await monthComps("2026-08")).toMatchObject({ from: "2026-08-01", to: "2026-08-31", results: { sides: 1 } });
+    expect(await monthComps("2026-07")).toBeNull();
+    expect(await monthComps("junk")).toBeNull();
+
+    const [stored] = await db.select().from(pvpCompFits).limit(1);
+    expect(await compFit(stored.killmailId)).toMatchObject({ killmailId: stored.killmailId, shipTypeId: stored.shipTypeId, role: "dps", month: null, losses: null });
+    expect(await compFit(1)).toBeNull();
   });
 });
