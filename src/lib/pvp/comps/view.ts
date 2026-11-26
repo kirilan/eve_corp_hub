@@ -1,5 +1,5 @@
 import "server-only";
-import { desc, eq, max } from "drizzle-orm";
+import { and, desc, eq, max } from "drizzle-orm";
 import { cacheLife, cacheTag } from "next/cache";
 import { db } from "@/db";
 import { pvpCompDays, pvpCompFits, pvpCompMonths } from "@/db/schema";
@@ -8,13 +8,14 @@ import { typeNames } from "@/lib/eve/types";
 import { FittingError, saveCopy, writeToGame, type Contents } from "@/lib/fittings/store";
 import { zkillKillUrl } from "../fits";
 import { addDays } from "./days";
+import { DEFAULT_CAP, type PriceCap } from "./fights";
 import { compsBetween } from "./months";
 import { ROLES, roleOf, type Role } from "./roles";
 import type { CompResults, ExampleFit } from "./score";
 
 /**
- * What the fleet comps page reads: the comps of the last 30 days or of a saved month, and the example
- * fits they point to. Public game data, for everyone. Cached until the daily job invalidates
+ * What the fleet comps page reads: the comps of the last 30 days or of a saved month at a price cap, and
+ * the example fits they point to. Public game data, for everyone. Cached until the daily job invalidates
  * `PVP_COMPS_TAG`.
  */
 
@@ -22,22 +23,22 @@ export const PVP_COMPS_TAG = "pvp-comps";
 /** The live view covers this many days, up to yesterday. */
 export const LIVE_DAYS = 30;
 
-/** Saved months, newest first, as "YYYY-MM". */
+/** Saved months (at any cap), newest first, as "YYYY-MM". */
 export async function compMonths(): Promise<string[]> {
   "use cache";
   cacheTag(PVP_COMPS_TAG);
   cacheLife("days");
-  const rows = await db.select({ month: pvpCompMonths.month }).from(pvpCompMonths).orderBy(desc(pvpCompMonths.month));
+  const rows = await db.selectDistinct({ month: pvpCompMonths.month }).from(pvpCompMonths).orderBy(desc(pvpCompMonths.month));
   return rows.map((row) => row.month.slice(0, 7));
 }
 
 export type CompPeriod = { from: string; to: string; results: CompResults };
 
 /**
- * The comps of the 30 days up to the last day read (at most yesterday, `today` being the UTC day), or
- * null before any day is read.
+ * The comps at a price cap of the 30 days up to the last day read (at most yesterday, `today` being the
+ * UTC day), or null before any day is read.
  */
-export async function liveComps(today: string): Promise<CompPeriod | null> {
+export async function liveComps(today: string, cap: PriceCap = DEFAULT_CAP): Promise<CompPeriod | null> {
   "use cache";
   cacheTag(PVP_COMPS_TAG);
   cacheLife("hours");
@@ -45,16 +46,19 @@ export async function liveComps(today: string): Promise<CompPeriod | null> {
   if (!last) return null;
   const to = last < today ? last : addDays(today, -1);
   const from = addDays(to, 1 - LIVE_DAYS);
-  return { from, to, results: await compsBetween(from, to) };
+  return { from, to, results: await compsBetween(from, to, cap) };
 }
 
-/** A saved month ("YYYY-MM"), or null if it is not saved. */
-export async function monthComps(month: string): Promise<CompPeriod | null> {
+/** A saved month ("YYYY-MM") at a price cap, or null if it is not saved at that cap. */
+export async function monthComps(month: string, cap: PriceCap = DEFAULT_CAP): Promise<CompPeriod | null> {
   "use cache";
   cacheTag(PVP_COMPS_TAG);
   cacheLife("days");
   if (!/^\d{4}-\d{2}$/.test(month)) return null;
-  const [row] = await db.select().from(pvpCompMonths).where(eq(pvpCompMonths.month, `${month}-01`));
+  const [row] = await db
+    .select()
+    .from(pvpCompMonths)
+    .where(and(eq(pvpCompMonths.month, `${month}-01`), eq(pvpCompMonths.cap, cap)));
   if (!row) return null;
   return { from: row.month, to: addDays(nextMonth(row.month), -1), results: row.results };
 }

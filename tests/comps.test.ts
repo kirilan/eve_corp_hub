@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/db";
 import { pvpCompDays, pvpCompFits, pvpCompHullLosses, pvpCompMonths, pvpCompSides } from "@/db/schema";
 import { addDays, COMPS_VERSION, FIRST_DAY, LATE_WINDOW_DAYS, MAX_LATE_PER_RUN, planDays, type StoredDay } from "@/lib/pvp/comps/days";
-import { compKill, groupFights, isWin, PRICE_CAP, processDay, splitSides, type CompKill } from "@/lib/pvp/comps/fights";
+import { compKill, groupFights, isWin, lossesAt, PRICE_CAP, processDay, splitSides, type CompKill } from "@/lib/pvp/comps/fights";
 import { isSmallGangCandidate } from "@/lib/pvp/comps/filter";
 import type { RawKillmail } from "@/lib/pvp/comps/r2z2";
 import { mixLabel, mixOf, roleOf } from "@/lib/pvp/comps/roles";
@@ -313,7 +313,17 @@ describe("fights", () => {
       [139532539, "2026-10-30", 4],
     ]);
     // Only the day's own losses count toward its hull losses.
-    expect(second.hullLosses.get(RETRIBUTION)).toEqual({ losses: 2, affordable: 2 });
+    expect(second.hullLosses.get(RETRIBUTION)).toEqual({ losses: 2, affordable: 2, under500m: 2, under200m: 2 });
+  });
+
+  it("counts each hull's losses under every price cap", () => {
+    const day = recordedOn("2026-10-30T10:00:00Z");
+    const result = processDay("2026-10-30", day, [], new Map([[RETRIBUTION, 300_000_000]]));
+    const retributions = result.hullLosses.get(RETRIBUTION)!;
+    expect(retributions.losses).toBeGreaterThan(0);
+    expect(retributions).toEqual({ losses: retributions.losses, affordable: retributions.losses, under500m: retributions.losses, under200m: 0 });
+    expect(lossesAt(retributions, 500)).toEqual({ losses: retributions.losses, affordable: retributions.losses });
+    expect(lossesAt(retributions, 200)).toEqual({ losses: retributions.losses, affordable: 0 });
   });
 });
 
@@ -409,6 +419,24 @@ describe("scoreComps", () => {
     // Loadout "b" was lost twice by winning sides, "a" once (the losing side's do not count).
     expect(result.hulls.tackle[0].fit).toEqual({ killmailId: 12, characterId: 1, items: [], value: 1, losses: 2 });
   });
+
+  it("keeps fits over a cheaper cap out of the hull's example fit", () => {
+    const sides = many(30, 30, (win) => side(3, [RIFTER, STILETTO, STILETTO], win));
+    const fit = (killmailId: number, value: number, loadout: string): ScoredFit => ({
+      killmailId,
+      fightId: sides[0].fightId,
+      side: 0,
+      characterId: 1,
+      shipTypeId: STILETTO,
+      items: [],
+      loadout,
+      value,
+    });
+    // Lost twice at 300M, once at 100M: at 1B the pricier loadout shows, at 200M only the cheap one.
+    const fits = [fit(20, 300_000_000, "pricey"), fit(21, 300_000_000, "pricey"), fit(22, 100_000_000, "cheap")];
+    expect(scoreComps(sides, losses, fits).hulls.tackle[0].fit?.killmailId).toBe(21);
+    expect(scoreComps(sides, losses, fits, 200).hulls.tackle[0].fit?.killmailId).toBe(22);
+  });
 });
 
 describe("syncCompDays with fights", () => {
@@ -427,11 +455,24 @@ describe("syncCompDays with fights", () => {
     expect(await db.$count(pvpCompMonths)).toBe(0);
 
     expect(await syncCompDays(240_000, new Date("2026-09-02T07:00:00Z"))).toMatchObject({ days: 1, monthsSaved: "2026-08" });
-    const [august] = await db.select().from(pvpCompMonths);
+    // Saved once per price cap.
+    expect((await db.select().from(pvpCompMonths)).map((row) => row.cap).sort()).toEqual([1000, 200, 500]);
+    const [august] = await db.select().from(pvpCompMonths).where(eq(pvpCompMonths.cap, 1000));
     expect(august.month).toBe("2026-08-01");
     // The Retributions count; the other side flew a hull nobody lost that month, so it cannot be priced.
     expect(august.results).toMatchObject({ sides: 1, overCap: 1 });
     expect(august.results.hulls.dps.map((stat) => stat.typeId)).toEqual([]);
+  });
+
+  it("fills in a cap a saved month lacks once its days are read again, keeping the caps it has", async () => {
+    await syncCompDays(240_000, new Date("2026-09-02T07:00:00Z"));
+    // A month saved before the cheaper caps existed.
+    await db.delete(pvpCompMonths).where(sql`${pvpCompMonths.cap} <> 1000`);
+    const [before] = await db.select().from(pvpCompMonths);
+    expect(await syncCompDays(240_000, new Date("2026-09-02T07:00:00Z"))).toMatchObject({ monthsSaved: "2026-08" });
+    expect(await db.$count(pvpCompMonths)).toBe(3);
+    const [after] = await db.select().from(pvpCompMonths).where(eq(pvpCompMonths.cap, 1000));
+    expect(after.savedAt).toEqual(before.savedAt);
   });
 
   it("deletes rows 40 days old only once their month is saved", async () => {
@@ -485,6 +526,8 @@ describe("comps page data", () => {
     const live = await liveComps("2026-09-02");
     expect(live).toMatchObject({ from: "2026-08-03", to: "2026-09-01", results: { sides: 1, overCap: 1 } });
     expect(await monthComps("2026-08")).toMatchObject({ from: "2026-08-01", to: "2026-08-31", results: { sides: 1 } });
+    expect(await monthComps("2026-08", 200)).toMatchObject({ from: "2026-08-01", results: { sides: expect.any(Number) } });
+    expect((await liveComps("2026-09-02", 500))?.results.sides).toEqual(expect.any(Number));
     expect(await monthComps("2026-07")).toBeNull();
     expect(await monthComps("junk")).toBeNull();
 

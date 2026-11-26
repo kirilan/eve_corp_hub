@@ -644,8 +644,9 @@ export const pvpCompFits = pgTable(
 );
 
 /**
- * Losses per hull per UTC day of the kills the comps pipeline keeps, for the 1B cap: a hull is
- * affordable when at least half its losses in the period cost 1B or less. Kept like `pvpCompSides`.
+ * Losses per hull per UTC day of the kills the comps pipeline keeps, for the price caps: a hull is
+ * affordable at a cap when at least half its losses in the period cost the cap or less. Kept like
+ * `pvpCompSides`.
  */
 export const pvpCompHullLosses = pgTable(
   "pvp_comp_hull_losses",
@@ -653,19 +654,27 @@ export const pvpCompHullLosses = pgTable(
     day: date("day", { mode: "string" }).notNull(),
     shipTypeId: eveId("ship_type_id").notNull(),
     losses: integer("losses").notNull(),
-    // Of those, the ones that cost 1B or less, hull and fit.
+    // Of those, the ones that cost 1B or less, hull and fit; then 500M or less, and 200M or less.
     affordable: integer("affordable").notNull(),
+    under500m: integer("under_500m").notNull().default(0),
+    under200m: integer("under_200m").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.day, t.shipTypeId] })],
 );
 
-/** The comps of each calendar month, saved for good once the month is complete. */
-export const pvpCompMonths = pgTable("pvp_comp_months", {
-  // The month's first day.
-  month: date("month", { mode: "string" }).primaryKey(),
-  results: jsonb("results").$type<CompResults>().notNull(),
-  savedAt: timestamp("saved_at", { withTimezone: true }).notNull().defaultNow(),
-});
+/** The comps of each calendar month at each price cap, saved for good once the month is complete. */
+export const pvpCompMonths = pgTable(
+  "pvp_comp_months",
+  {
+    // The month's first day.
+    month: date("month", { mode: "string" }).notNull(),
+    // The price cap per ship in millions of ISK (`PRICE_CAPS`).
+    cap: smallint("cap").notNull().default(1000),
+    results: jsonb("results").$type<CompResults>().notNull(),
+    savedAt: timestamp("saved_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.month, t.cap] })],
+);
 
 export type User = typeof users.$inferSelect;
 export type Character = typeof characters.$inferSelect;

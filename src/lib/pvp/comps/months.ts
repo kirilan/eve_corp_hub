@@ -3,7 +3,8 @@ import { and, between, eq, isNotNull, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { pvpCompDays, pvpCompFits, pvpCompHullLosses, pvpCompMonths, pvpCompSides } from "@/db/schema";
 import { addDays, COMPS_VERSION, FIRST_DAY, LATE_WINDOW_DAYS } from "./days";
-import { scoreComps, type CompResults } from "./score";
+import { DEFAULT_CAP, lossesAt, PRICE_CAPS, type HullLossCounts, type PriceCap } from "./fights";
+import { scoreComps, type CompResults, type ScoredFit, type ScoredSide } from "./score";
 
 /**
  * Saved months and the rows behind them. A calendar month is saved for good once every one of its days
@@ -11,8 +12,10 @@ import { scoreComps, type CompResults } from "./score";
  * Rows are then deleted once 40 days old, never before their month is saved.
  */
 
-/** The comps of the fights whose first kill fell between two UTC days, both included. */
-export async function compsBetween(from: string, to: string): Promise<CompResults> {
+type Rows = { sides: ScoredSide[]; hullLosses: Map<number, HullLossCounts>; fits: ScoredFit[] };
+
+/** The stored rows of the fights whose first kill fell between two UTC days, both included. */
+async function rowsBetween(from: string, to: string): Promise<Rows> {
   const [sides, losses, fits] = await Promise.all([
     db
       .select({
@@ -41,14 +44,26 @@ export async function compsBetween(from: string, to: string): Promise<CompResult
       .from(pvpCompFits)
       .where(between(pvpCompFits.day, from, to)),
   ]);
-  const hullLosses = new Map<number, { losses: number; affordable: number }>();
+  const hullLosses = new Map<number, HullLossCounts>();
   for (const row of losses) {
-    const total = hullLosses.get(row.shipTypeId) ?? { losses: 0, affordable: 0 };
+    const total = hullLosses.get(row.shipTypeId) ?? { losses: 0, affordable: 0, under500m: 0, under200m: 0 };
     total.losses += row.losses;
     total.affordable += row.affordable;
+    total.under500m += row.under500m;
+    total.under200m += row.under200m;
     hullLosses.set(row.shipTypeId, total);
   }
-  return scoreComps(sides, hullLosses, fits);
+  return { sides, hullLosses, fits };
+}
+
+function scoreAt({ sides, hullLosses, fits }: Rows, cap: PriceCap): CompResults {
+  const atCap = new Map([...hullLosses].map(([hull, counts]) => [hull, lossesAt(counts, cap)]));
+  return scoreComps(sides, atCap, fits, cap);
+}
+
+/** The comps at a price cap of the fights whose first kill fell between two UTC days, both included. */
+export async function compsBetween(from: string, to: string, cap: PriceCap = DEFAULT_CAP): Promise<CompResults> {
+  return scoreAt(await rowsBetween(from, to), cap);
 }
 
 const monthOf = (day: string) => `${day.slice(0, 7)}-01`;
@@ -66,10 +81,26 @@ function pastMonths(today: string): string[] {
   return out;
 }
 
-/** Saves every complete month not saved yet; returns the months saved. */
+/** For each month saved at any cap, the caps it is saved at. */
+async function savedCaps(): Promise<Map<string, Set<number>>> {
+  const out = new Map<string, Set<number>>();
+  for (const row of await db.select({ month: pvpCompMonths.month, cap: pvpCompMonths.cap }).from(pvpCompMonths)) {
+    out.set(row.month, (out.get(row.month) ?? new Set()).add(row.cap));
+  }
+  return out;
+}
+
+/** Whether a month is saved at every price cap. */
+const savedAtEveryCap = (saved: Map<string, Set<number>>, month: string) => PRICE_CAPS.every((cap) => saved.get(month)?.has(cap));
+
+/**
+ * Saves every complete month at each price cap it is not saved at yet; returns the months saved. A cap
+ * added later is filled in for past months once their days are read again (a `COMPS_VERSION` bump),
+ * and the months saved before keep their results at the other caps.
+ */
 export async function saveCompleteMonths(today: string): Promise<string[]> {
-  const saved = new Set((await db.select({ month: pvpCompMonths.month }).from(pvpCompMonths)).map((row) => row.month));
-  const pending = pastMonths(today).filter((month) => !saved.has(month));
+  const saved = await savedCaps();
+  const pending = pastMonths(today).filter((month) => !savedAtEveryCap(saved, month));
   if (pending.length === 0) return [];
   const read = new Set(
     (await db.select({ day: pvpCompDays.day }).from(pvpCompDays).where(eq(pvpCompDays.version, COMPS_VERSION))).map((row) => row.day),
@@ -81,8 +112,11 @@ export async function saveCompleteMonths(today: string): Promise<string[]> {
     let complete = read.has(next);
     for (let day = month < FIRST_DAY ? FIRST_DAY : month; complete && day <= last; day = addDays(day, 1)) complete = read.has(day);
     if (!complete) continue;
-    const results = await compsBetween(month, last);
-    await db.insert(pvpCompMonths).values({ month, results }).onConflictDoUpdate({ target: pvpCompMonths.month, set: { results, savedAt: new Date() } });
+    const rows = await rowsBetween(month, last);
+    for (const cap of PRICE_CAPS) {
+      if (saved.get(month)?.has(cap)) continue;
+      await db.insert(pvpCompMonths).values({ month, cap, results: scoreAt(rows, cap) });
+    }
     out.push(month);
   }
   return out;
@@ -93,8 +127,8 @@ export async function saveCompleteMonths(today: string): Promise<string[]> {
  * days too old to be read again.
  */
 export async function pruneCompRows(today: string) {
-  const saved = new Set((await db.select({ month: pvpCompMonths.month }).from(pvpCompMonths)).map((row) => row.month));
-  const unsaved = pastMonths(today).find((month) => !saved.has(month)) ?? monthOf(today);
+  const saved = await savedCaps();
+  const unsaved = pastMonths(today).find((month) => !savedAtEveryCap(saved, month)) ?? monthOf(today);
   const cutoff = addDays(today, -LATE_WINDOW_DAYS);
   const before = unsaved < cutoff ? unsaved : cutoff;
   await db.delete(pvpCompSides).where(lt(pvpCompSides.day, before));

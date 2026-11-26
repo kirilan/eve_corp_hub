@@ -120,6 +120,13 @@
       "when": 1795635097263,
       "tag": "0016_pvp_comps",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795674618710,
+      "tag": "0017_pvp_comp_caps",
+      "breakpoints": true
     }
   ]
 }

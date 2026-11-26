@@ -4,7 +4,8 @@
  */
 
 /** Bumped when what the pipeline keeps from a day changes: every day is then read again. */
-export const COMPS_VERSION = 2;
+// 3: hull losses counted under each price cap.
+export const COMPS_VERSION = 3;
 /** The first day read: August to October 2026 seed the saved months, then it keeps going. */
 export const FIRST_DAY = "2026-08-01";
 /** Late killmails are picked up this far back: the 40 days side rows are kept. */

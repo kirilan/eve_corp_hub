@@ -1,5 +1,5 @@
 import type { FittingItem } from "@/db/schema";
-import { GANG_SIZES, isFair, isWin, PRICE_CAP } from "./fights";
+import { capIsk, DEFAULT_CAP, GANG_SIZES, isFair, isWin, type PriceCap } from "./fights";
 import { mixOf, ROLES, roleOf, type Mix, type Role } from "./roles";
 
 /**
@@ -7,9 +7,9 @@ import { mixOf, ROLES, roleOf, type Mix, type Role } from "./roles";
  * grows from 3 to 7 pilots, and which hulls fill each role. Pure; the same for the live 30 days and a
  * saved month.
  *
- * Only fair fights count (`isFair`), and only sides whose every hull is affordable: at least half of
- * that hull's losses in the period cost 1B or less. A side flying a hull with no loss in the period
- * cannot be priced and is left out too.
+ * Only fair fights count (`isFair`), and only sides whose every hull is affordable at the price cap: at
+ * least half of that hull's losses in the period cost the cap or less (1B, or a cheaper cap). A side
+ * flying a hull with no loss in the period cannot be priced and is left out too.
  */
 
 /** A mix or hull shows once it has this many fair fights; under `SOLID_FIGHTS` it is marked low sample. */
@@ -41,14 +41,20 @@ export function wilsonLow(wins: number, fights: number, z = 1.96): number {
   return (p + z2 / (2 * fights) - z * Math.sqrt((p * (1 - p)) / fights + z2 / (4 * fights * fights))) / (1 + z2 / fights);
 }
 
-/** Whether a hull's typical fit is under the cap: at least half its losses cost 1B or less. */
+/** Whether a hull's typical fit is under the cap: at least half its losses cost the cap or less. */
 export const isAffordable = (losses: { losses: number; affordable: number } | undefined) =>
   losses !== undefined && losses.losses > 0 && losses.affordable * 2 >= losses.losses;
 
 const contains = (big: Mix, small: Mix) => big.every((count, i) => count >= small[i]);
 const byLow = <T extends { low: number; fights: number }>(a: T, b: T) => b.low - a.low || b.fights - a.fights;
 
-export function scoreComps(sides: ScoredSide[], hullLosses: Map<number, { losses: number; affordable: number }>, fits: ScoredFit[]): CompResults {
+/** `hullLosses` counts, per hull, all losses and those at or under `cap` (see `lossesAt`). */
+export function scoreComps(
+  sides: ScoredSide[],
+  hullLosses: Map<number, { losses: number; affordable: number }>,
+  fits: ScoredFit[],
+  cap: PriceCap = DEFAULT_CAP,
+): CompResults {
   const smallest = GANG_SIZES[0];
   const largest = GANG_SIZES[GANG_SIZES.length - 1];
   const fair = sides.filter((side) => side.pilots >= smallest && side.pilots <= largest && isFair(side));
@@ -100,7 +106,7 @@ export function scoreComps(sides: ScoredSide[], hullLosses: Map<number, { losses
   // Example fits: per hull, the loadout winning sides lost most, shown by its latest loss.
   const loadouts = new Map<number, Map<string, { count: number; latest: ScoredFit }>>();
   for (const fit of fits) {
-    if (!winning.has(`${fit.fightId}:${fit.side}`) || fit.value > PRICE_CAP) continue;
+    if (!winning.has(`${fit.fightId}:${fit.side}`) || fit.value > capIsk(cap)) continue;
     const byLoadout = loadouts.get(fit.shipTypeId) ?? new Map<string, { count: number; latest: ScoredFit }>();
     const entry = byLoadout.get(fit.loadout);
     if (!entry) byLoadout.set(fit.loadout, { count: 1, latest: fit });

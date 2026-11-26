@@ -21,6 +21,15 @@ import { isBannedModule, isHull, pvpType } from "./static-data";
 
 /** The price cap per ship, hull and fit. */
 export const PRICE_CAP = 1_000_000_000;
+/**
+ * The caps the comps can be read at, in millions of ISK, highest first: the first is `PRICE_CAP`, the
+ * others pick cheaper gangs.
+ */
+export const PRICE_CAPS = [1000, 500, 200] as const;
+export type PriceCap = (typeof PRICE_CAPS)[number];
+export const DEFAULT_CAP: PriceCap = 1000;
+export const capIsk = (cap: PriceCap) => cap * 1_000_000;
+export const isPriceCap = (value: number): value is PriceCap => (PRICE_CAPS as readonly number[]).includes(value);
 /** Kills further apart than this in one system are separate fights. */
 const FIGHT_GAP_S = 15 * 60;
 /** Sides of these sizes are stored; the comps use 3 to 7, the rest is kept for later. */
@@ -74,8 +83,15 @@ export type FitRow = {
   value: number;
 };
 
-/** Losses per hull on one day: all kept losses, and those under the price cap. */
-export type HullLosses = Map<number, { losses: number; affordable: number }>;
+/** One hull's losses: all kept losses, and those at or under each price cap (`affordable` is 1B). */
+export type HullLossCounts = { losses: number; affordable: number; under500m: number; under200m: number };
+/** Losses per hull on one day. */
+export type HullLosses = Map<number, HullLossCounts>;
+
+const CAP_FIELD = { 1000: "affordable", 500: "under500m", 200: "under200m" } as const satisfies Record<PriceCap, keyof HullLossCounts>;
+
+/** A hull's losses as one cap sees them: all of them, and those at or under the cap. */
+export const lossesAt = (counts: HullLossCounts, cap: PriceCap) => ({ losses: counts.losses, affordable: counts[CAP_FIELD[cap]] });
 
 // Inventory flags that make up a fit: low, mid and high slots, rigs, subsystems, the drone bay.
 const isFitFlag = (flag: number) => (flag >= 11 && flag <= 34) || (flag >= 92 && flag <= 99) || (flag >= 125 && flag <= 132) || flag === 87;
@@ -262,9 +278,9 @@ export function processDay(day: string, killmails: RawKillmail[], carried: CompK
     kept += 1;
     const kill = compKill(killmail, prices);
     kills.push(kill);
-    const hull = hullLosses.get(kill.victim.ship) ?? { losses: 0, affordable: 0 };
+    const hull = hullLosses.get(kill.victim.ship) ?? { losses: 0, affordable: 0, under500m: 0, under200m: 0 };
     hull.losses += 1;
-    if (kill.value <= PRICE_CAP) hull.affordable += 1;
+    for (const cap of PRICE_CAPS) if (kill.value <= capIsk(cap)) hull[CAP_FIELD[cap]] += 1;
     hullLosses.set(kill.victim.ship, hull);
   }
 

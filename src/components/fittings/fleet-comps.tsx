@@ -4,6 +4,7 @@ import { io } from "next/cache";
 import { typeIconUrl } from "@/lib/eve/images";
 import { formatIsk } from "@/lib/income/format";
 import { utcDay } from "@/lib/pvp/comps/days";
+import { DEFAULT_CAP, isPriceCap, PRICE_CAPS, type PriceCap } from "@/lib/pvp/comps/fights";
 import { mixLabel, ROLES, type Mix, type Role } from "@/lib/pvp/comps/roles";
 import { MIN_FIGHTS, SOLID_FIGHTS, type CompResults, type GrowthStep, type HullStat, type MixStat } from "@/lib/pvp/comps/score";
 import { compMonths, hullNames, LIVE_DAYS, liveComps, monthComps } from "@/lib/pvp/comps/view";
@@ -25,51 +26,69 @@ const monthLabel = (month: string) => `${MONTHS[Number(month.slice(5, 7)) - 1]} 
 const dayLabel = (day: string) => `${Number(day.slice(8, 10))} ${MONTHS[Number(day.slice(5, 7)) - 1]}`;
 const percent = (part: number, whole: number) => `${Math.round((100 * part) / whole)}%`;
 const plural = (n: number, word: string) => `${n.toLocaleString("en")} ${word}${n === 1 ? "" : "s"}`;
+/** A price cap as the game writes ISK: "1B", "500M". */
+const capLabel = (cap: PriceCap) => (cap >= 1000 ? `${cap / 1000}B` : `${cap}M`);
+
+/** The page at a month (null for the last 30 days) and a price cap. */
+function pageHref(month: string | null, cap: PriceCap): string {
+  const query = new URLSearchParams();
+  if (month) query.set("month", month);
+  if (cap !== DEFAULT_CAP) query.set("cap", String(cap));
+  const search = query.toString();
+  return search ? `${PATH}?${search}` : PATH;
+}
 
 type Params = Record<string, string | string[] | undefined>;
 
 /**
- * The small-gang fleet comps: for the last 30 days, or a saved month with `?month=YYYY-MM`. Public:
- * shown to everyone, signed in or not.
+ * The small-gang fleet comps: for the last 30 days, or a saved month with `?month=YYYY-MM`; at the 1B
+ * price cap per ship, or a cheaper one with `?cap=500` or `?cap=200`. Public: shown to everyone, signed
+ * in or not.
  */
 export async function FleetComps({ searchParams }: { searchParams: Promise<Params> }) {
   // Awaited first, so this reads at request time (from the cache), never while prerendering at build.
   const params = await searchParams;
   const months = await compMonths();
   const month = typeof params.month === "string" && months.includes(params.month) ? params.month : null;
+  const asked = typeof params.cap === "string" ? Number(params.cap) : DEFAULT_CAP;
+  const cap = isPriceCap(asked) ? asked : DEFAULT_CAP;
   let period;
-  if (month) period = await monthComps(month);
+  if (month) period = await monthComps(month, cap);
   else {
     // Today's date is read per request, not baked into the prerendered shell.
     await io();
-    period = await liveComps(utcDay(new Date()));
+    period = await liveComps(utcDay(new Date()), cap);
   }
 
   return (
     <div className="space-y-8">
-      <PeriodPicker months={months} current={month} />
+      <div className="space-y-2">
+        <PeriodPicker months={months} current={month} cap={cap} />
+        <CapPicker month={month} current={cap} />
+      </div>
       {!period || period.results.sides === 0 ? (
         <p className="rounded border border-dashed border-border p-6 text-sm text-muted">
-          Nothing here yet: the daily job has not read enough days of killmails.
+          Nothing here yet{cap !== DEFAULT_CAP && <> at {capLabel(cap)} a ship</>}: the daily job has not read enough days of killmails.
         </p>
       ) : (
-        <Results from={period.from} to={period.to} results={period.results} live={!month} />
+        <Results from={period.from} to={period.to} results={period.results} live={!month} cap={cap} />
       )}
       <Caveats />
     </div>
   );
 }
 
-function PeriodPicker({ months, current }: { months: string[]; current: string | null }) {
-  const pill = (active: boolean) =>
-    `rounded border px-3 py-1 text-sm ${active ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"}`;
+const pill = (active: boolean) =>
+  `rounded border px-3 py-1 text-sm ${active ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"}`;
+
+function PeriodPicker({ months, current, cap }: { months: string[]; current: string | null; cap: PriceCap }) {
   return (
     <nav aria-label="Period" className="flex flex-wrap gap-2">
-      <Link href={PATH} scroll={false} aria-current={current === null ? "page" : undefined} className={pill(current === null)}>
+      <Link href={pageHref(null, cap)} scroll={false} aria-current={current === null ? "page" : undefined} className={pill(current === null)}>
         Last {LIVE_DAYS} days
       </Link>
       {months.map((month) => (
-        <Link key={month} href={`${PATH}?month=${month}`} scroll={false} aria-current={current === month ? "page" : undefined} className={pill(current === month)}>
+        <Link key={month} href={pageHref(month, cap)} scroll={false} aria-current={current === month ? "page" : undefined} className={pill(current === month)}>
           {monthLabel(month)}
         </Link>
       ))}
@@ -77,17 +96,31 @@ function PeriodPicker({ months, current }: { months: string[]; current: string |
   );
 }
 
-async function Results({ from, to, results, live }: { from: string; to: string; results: CompResults; live: boolean }) {
+/** The price cap per ship: the comps are scored again at each, with only the sides that fit under it. */
+function CapPicker({ month, current }: { month: string | null; current: PriceCap }) {
+  return (
+    <nav aria-label="Price cap per ship" className="flex flex-wrap items-center gap-2">
+      <span className="text-sm text-muted">Each ship at most</span>
+      {PRICE_CAPS.map((cap) => (
+        <Link key={cap} href={pageHref(month, cap)} scroll={false} aria-current={current === cap ? "page" : undefined} className={pill(current === cap)}>
+          {capLabel(cap)}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+async function Results({ from, to, results, live, cap }: { from: string; to: string; results: CompResults; live: boolean; cap: PriceCap }) {
   const names = await hullNames(results);
   return (
     <>
       <p className="max-w-3xl text-sm text-muted">
         {live ? `${dayLabel(from)} to ${dayLabel(to)}` : monthLabel(from)}: {plural(results.sides, "fair fight")} by gangs of 3 to 7 pilots
-        {results.overCap > 0 && <>, after leaving out {plural(results.overCap, "side")} that flew a hull whose typical fit costs over 1B</>}.
+        {results.overCap > 0 && <>, after leaving out {plural(results.overCap, "side")} that flew a hull whose typical fit costs over {capLabel(cap)}</>}.
       </p>
       <GrowthPath results={results} />
       <MixesBySize results={results} />
-      <HullsByRole results={results} names={names} />
+      <HullsByRole results={results} names={names} cap={cap} />
     </>
   );
 }
@@ -223,14 +256,14 @@ function MixesBySize({ results }: { results: CompResults }) {
   );
 }
 
-function HullsByRole({ results, names }: { results: CompResults; names: Record<number, string> }) {
+function HullsByRole({ results, names, cap }: { results: CompResults; names: Record<number, string>; cap: PriceCap }) {
   return (
     <section className="space-y-3">
       <div>
         <h2 className="text-xl font-semibold">Hulls by role</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted">
           Hulls that flew in at least {MIN_FIGHTS} fair fights in gangs of 3 to 7, ranked like the mixes. Each fit is the loadout winning gangs
-          lost most in that hull, under 1B and without officer, deadspace or abyssal modules. Open one to save a copy or send it to a
+          lost most in that hull, at most {capLabel(cap)} and without officer, deadspace or abyssal modules. Open one to save a copy or send it to a
           character.
         </p>
       </div>
