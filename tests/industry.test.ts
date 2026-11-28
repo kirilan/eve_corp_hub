@@ -713,7 +713,7 @@ describe("characterRates", () => {
           ],
     );
     const data = await characterRates(userId, 1, "Pilot 1");
-    expect(characterAccessToken).toHaveBeenCalledWith(userId, 1, "skills");
+    expect(characterAccessToken).toHaveBeenCalledWith(userId, 1, "skills", undefined);
     expect(esi.mock.calls.map((call) => call[0])).toEqual(["/characters/1/skills", "/characters/1/standings"]);
     expect(data).toEqual({
       id: 1,

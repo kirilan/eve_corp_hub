@@ -19,19 +19,27 @@ const STANDINGS = new Set<number>(
 
 /**
  * One of the profile's own characters, as the calculator needs it: its levels in the reprocessing and
- * trading skills, and its standings with the NPC hubs' owners. Read live, never stored. Active levels,
+ * trading skills, and its standings with the NPC hubs' owners (and any other `owners`, NPC corporations
+ * owning stations it trades at). Read live, never stored. Active levels,
  * so an Alpha clone counts at the levels it can use.
  */
-export async function characterRates(userId: string, characterId: number, name: string): Promise<CharacterData> {
-  const token = await characterAccessToken(userId, characterId, "skills");
+export async function characterRates(
+  userId: string,
+  characterId: number,
+  name: string,
+  options: { owners?: number[]; signal?: AbortSignal } = {},
+): Promise<CharacterData> {
+  const { signal } = options;
+  const owners = new Set([...STANDINGS, ...(options.owners ?? [])]);
+  const token = await characterAccessToken(userId, characterId, "skills", signal);
   const [skills, standings] = await Promise.all([
-    esi<EsiSkills>(`/characters/${characterId}/skills`, { token }),
-    esi<EsiStanding[]>(`/characters/${characterId}/standings`, { token }),
+    esi<EsiSkills>(`/characters/${characterId}/skills`, { token, signal }),
+    esi<EsiStanding[]>(`/characters/${characterId}/standings`, { token, signal }),
   ]);
   return {
     id: characterId,
     name,
     skills: Object.fromEntries(skills.skills.filter((s) => SKILLS.has(s.skill_id) && s.active_skill_level > 0).map((s) => [s.skill_id, s.active_skill_level])),
-    standings: Object.fromEntries(standings.filter((s) => s.from_type !== "agent" && STANDINGS.has(s.from_id)).map((s) => [s.from_id, s.standing])),
+    standings: Object.fromEntries(standings.filter((s) => s.from_type !== "agent" && owners.has(s.from_id)).map((s) => [s.from_id, s.standing])),
   };
 }

@@ -2,13 +2,18 @@ import "server-only";
 import { listCharacters } from "@/lib/auth/accounts";
 import { characterAccessToken, ConsentMissingError } from "@/lib/auth/tokens";
 import { deadlineSignal, OPERATION_TIMEOUT_MS } from "@/lib/eve/deadline";
-import { esiCached } from "@/lib/eve/esi";
+import { esi, esiCached } from "@/lib/eve/esi";
 import { entityNames } from "@/lib/eve/names";
 import { hasFeature } from "@/lib/eve/sso";
 import { typeNames } from "@/lib/eve/types";
+import { characterRates } from "@/lib/industry/character";
 import { regionPace } from "@/lib/industry/history";
 import { HUBS } from "@/lib/industry/hubs";
 import { type HubPrices, locationPrices, type MarketLocation } from "@/lib/industry/market";
+import { type Reprocessing, reprocessing } from "@/lib/industry/materials";
+import { type CharacterData, effectiveStanding, npcReprocessingTax, SKILL, salesTax } from "@/lib/industry/rates";
+import type { Book } from "@/lib/industry/reprocess";
+import { facilityYields, type Floor, NO_SKILLS, type ReprocessSkills, reprocessFloor } from "./floor";
 import { corpOrders, saveSharedOrders, toShared } from "./shared";
 import { type CorpAhead, corpAhead, competitors, type OwnAhead, ownAhead, type Standing, standing, type Status } from "./standing";
 
@@ -66,6 +71,17 @@ export type OrderRow = Omit<Standing, "status"> & {
   corp: CorpAhead | null;
   // The profile's other orders (any of its characters) priced ahead of this one; null when none are.
   own: OwnAhead | null;
+  // Reprocess floor (sell) or ceiling (buy) at the order's station; null when the item does not
+  // reprocess or its materials have no buyers there.
+  reprocess: OrderFloor | null;
+};
+
+export type OrderFloor = Floor & {
+  // The rates it was worked out with, as fractions.
+  reprocessingTax: number;
+  salesTax: number;
+  // What had to be assumed for want of data, in words.
+  assumed: string[];
 };
 
 export type OrderCharacter = {
@@ -83,6 +99,54 @@ export type OrderCharacter = {
 export type OrdersReport = { characters: OrderCharacter[]; orders: OrderRow[]; warnings: string[]; checkedAt: number };
 
 const isStructure = (locationId: number) => locationId >= FIRST_STRUCTURE_ID;
+
+type EsiStation = { owner?: number; reprocessing_efficiency?: number; reprocessing_stations_take?: number };
+
+/** Where an order would be reprocessed: the facility's base yield, its tax before standings, and its owner. */
+type Facility = { base: number; take: number; owner: number | null; assumed: string | null };
+
+// A structure's owner sets its tax, which ESI does not publish; with no rigs its base yield is 50%.
+const STRUCTURE_FACILITY: Facility = { base: 0.5, take: 0, owner: null, assumed: "the structure's reprocessing tax is not published: 0% assumed" };
+
+/** Reprocessing at each order location: Jita and structures as the calculator has them, other NPC stations as ESI says. */
+async function facilities(locationIds: number[], signal: AbortSignal): Promise<Map<number, Facility>> {
+  const jita = HUBS.jita;
+  const out = new Map<number, Facility>();
+  await Promise.all(
+    locationIds.map(async (locationId) => {
+      if (locationId === jita.locationId) return out.set(locationId, { base: jita.baseYield, take: jita.stationTake, owner: jita.owner.id, assumed: null });
+      if (isStructure(locationId)) return out.set(locationId, STRUCTURE_FACILITY);
+      try {
+        const station = await esi<EsiStation>(`/universe/stations/${locationId}`, { signal });
+        out.set(locationId, {
+          base: station.reprocessing_efficiency ?? 0.5,
+          take: station.reprocessing_stations_take ?? 0.05,
+          owner: station.owner ?? null,
+          assumed: null,
+        });
+      } catch (error) {
+        console.warn(`station ${locationId} could not be read`, error);
+        out.set(locationId, { base: 0.5, take: 0.05, owner: null, assumed: "the station's rates could not be read: 50% yield and 5% tax assumed" });
+      }
+    }),
+  );
+  return out;
+}
+
+function reprocessSkills(character: CharacterData): ReprocessSkills {
+  const level = (skill: number) => character.skills[skill] ?? 0;
+  return { scrapmetal: level(SKILL.scrapmetal), reprocessing: level(SKILL.reprocessing), efficiency: level(SKILL.efficiency), ore: character.skills };
+}
+
+/** Sales tax and the facility's reprocessing tax for one character, as the calculator estimates them. */
+function characterTaxes(facility: Facility, character: CharacterData | null): { reprocessingTax: number; salesTax: number } {
+  const level = (skill: number) => character?.skills[skill] ?? 0;
+  const standing =
+    character && facility.owner !== null && facility.owner in character.standings
+      ? effectiveStanding(character.standings[facility.owner], level(SKILL.connections), level(SKILL.diplomacy))
+      : 0;
+  return { reprocessingTax: npcReprocessingTax(facility.take, standing), salesTax: salesTax(level(SKILL.accounting)) };
+}
 
 function expiry(order: EsiCharacterOrder): string {
   return new Date(new Date(order.issued).getTime() + order.duration * 24 * 60 * 60 * 1000).toISOString();
@@ -157,6 +221,35 @@ export async function openOrders(userId: string, options: { fresh?: boolean; sig
   for (const order of orders) byLocation.set(order.location_id, [...(byLocation.get(order.location_id) ?? []), order]);
   const warnings: string[] = [];
   const books = new Map<number, HubPrices>();
+  // Recipes of the items that reprocess, and their materials' books at each station, for the floors.
+  const recipes = new Map<number, Reprocessing>();
+  for (const typeId of new Set(orders.map((o) => o.type_id))) {
+    const recipe = reprocessing(typeId);
+    if (recipe) recipes.set(typeId, recipe);
+  }
+  const materialBooks = new Map<number, Map<number, Book>>();
+  const reprocessed = [...byLocation].filter(([, here]) => here.some((o) => recipes.has(o.type_id))).map(([locationId]) => locationId);
+  // Skills and standings of the characters with orders to floor (the stations' owners known first), alongside the books.
+  const rates = (async () => {
+    const at = await facilities(reprocessed, signal);
+    const owners = [...new Set([...at.values()].map((f) => f.owner).filter((id) => id !== null))];
+    const who = new Set(orders.filter((o) => recipes.has(o.type_id)).map((o) => o.characterId));
+    const read = new Map<number, CharacterData | null>();
+    await Promise.all(
+      profile
+        .filter((c) => who.has(c.id))
+        .map(async (c) => {
+          if (!hasFeature(c.scopes, "skills")) return read.set(c.id, null);
+          try {
+            read.set(c.id, await characterRates(userId, c.id, c.name, { owners, signal }));
+          } catch (error) {
+            if (!(error instanceof ConsentMissingError)) console.warn(`skills read failed for character ${c.id}`, error);
+            read.set(c.id, null);
+          }
+        }),
+    );
+    return { facilities: at, characters: read };
+  })();
   await Promise.all(
     [...byLocation].map(async ([locationId, here]) => {
       const structure = isStructure(locationId);
@@ -169,22 +262,42 @@ export async function openOrders(userId: string, options: { fresh?: boolean; sig
         // Anyone's market reader may serve the hub; for any other structure, only the viewer's own characters are known to dock there.
         ownReadersOnly: structure && !hub,
       };
-      try {
-        const prices = await locationPrices(location, here.map((o) => o.type_id), userId, {
-          signal,
-          maxAgeMs: options.fresh
-            ? structure
-              ? FRESH_STRUCTURE_MAX_AGE_MS
-              : FRESH_BOOK_MAX_AGE_MS
-            : structure
-              ? STRUCTURE_MAX_AGE_MS
-              : BOOK_MAX_AGE_MS,
-        });
+      const itemIds = [...new Set(here.map((o) => o.type_id))];
+      const materialIds = [...new Set(itemIds.flatMap((typeId) => recipes.get(typeId)?.materials.map(([m]) => m) ?? []))].filter(
+        (typeId) => !itemIds.includes(typeId),
+      );
+      const maxAgeMs = options.fresh
+        ? structure
+          ? FRESH_STRUCTURE_MAX_AGE_MS
+          : FRESH_BOOK_MAX_AGE_MS
+        : structure
+          ? STRUCTURE_MAX_AGE_MS
+          : BOOK_MAX_AGE_MS;
+      // A structure's market is read whole, so one read covers the materials too (two at once would
+      // trip over each other's lease). At a station, materials are read per type, and a floor does
+      // not need them as fresh as the books orders are checked against.
+      const [prices, materials] = await Promise.all([
+        locationPrices(location, structure ? [...itemIds, ...materialIds] : itemIds, userId, { signal, maxAgeMs }).catch((error: unknown) => {
+          console.warn(`order book read failed at ${locationId}`, error);
+          warnings.push(`Could not read the market at ${location.label}.`);
+          return null;
+        }),
+        structure || materialIds.length === 0
+          ? null
+          : locationPrices(location, materialIds, userId, { signal }).catch((error: unknown) => {
+              console.warn(`material prices read failed at ${locationId}`, error);
+              warnings.push(`Could not read material prices at ${location.label}; reprocess floors there are missing.`);
+              return null;
+            }),
+      ]);
+      if (prices) {
         books.set(locationId, prices);
         warnings.push(...prices.warnings);
-      } catch (error) {
-        console.warn(`order book read failed at ${locationId}`, error);
-        warnings.push(`Could not read the market at ${location.label}.`);
+      }
+      const forMaterials = structure ? prices : materials;
+      if (forMaterials?.available) {
+        materialBooks.set(locationId, forMaterials.books);
+        if (!structure) warnings.push(...forMaterials.warnings);
       }
     }),
   );
@@ -200,6 +313,35 @@ export async function openOrders(userId: string, options: { fresh?: boolean; sig
       }
     }),
   );
+
+  const { facilities: facilityAt, characters: ratesOf } = await rates;
+  const nameOf = new Map(profile.map((c) => [c.id, c.name]));
+  const floorOf = (order: (typeof orders)[number]): OrderFloor | null => {
+    const recipe = recipes.get(order.type_id);
+    const materials = materialBooks.get(order.location_id);
+    const facility = facilityAt.get(order.location_id);
+    if (!recipe || !materials || !facility) return null;
+    const character = ratesOf.get(order.characterId) ?? null;
+    const taxes = characterTaxes(facility, character);
+    const floor = reprocessFloor({
+      side: order.is_buy_order ? "buy" : "sell",
+      price: order.price,
+      units: order.volume_remain,
+      reprocess: recipe,
+      books: materials,
+      yields: facilityYields(facility.base, character ? reprocessSkills(character) : NO_SKILLS),
+      ...taxes,
+    });
+    if (!floor) return null;
+    const assumed = [
+      character
+        ? null
+        : `${nameOf.get(order.characterId) ?? "This character"} does not allow reading skills and standings: no skills assumed`,
+      facility.assumed,
+      recipe.oreSkill !== null ? "no implant or structure rigs" : null,
+    ].filter((a) => a !== null);
+    return { ...floor, ...taxes, assumed };
+  };
 
   const rows: OrderRow[] = orders.map((order) => {
     const isBuy = Boolean(order.is_buy_order);
@@ -231,7 +373,7 @@ export async function openOrders(userId: string, options: { fresh?: boolean; sig
         ? "Structure market not readable: a character of yours that can dock there must allow market reading"
         : "Order book not available right now";
       const own = ownAhead({ orderId: order.order_id, isBuy, price: order.price }, siblings, null);
-      return { ...base, status: "unknown", note: why, bestOther: null, unitsAhead: 0, daysAhead: null, suggest: null, corp: null, own };
+      return { ...base, status: "unknown", note: why, bestOther: null, unitsAhead: 0, daysAhead: null, suggest: null, corp: null, own, reprocess: floorOf(order) };
     }
     const others = competitors(isBuy ? book.buy : book.sell, siblings);
     const own = ownAhead({ orderId: order.order_id, isBuy, price: order.price }, siblings, others[0]?.[0] ?? null);
@@ -247,6 +389,7 @@ export async function openOrders(userId: string, options: { fresh?: boolean; sig
       note: null,
       corp: theirs.length > 0 ? corpAhead(isBuy, order.price, others, theirs) : null,
       own,
+      reprocess: floorOf(order),
     };
   });
   return { characters, orders: rows, warnings: [...new Set(warnings)], checkedAt: Date.now() };

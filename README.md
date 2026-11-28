@@ -84,7 +84,9 @@ profile can see follows its **main character's corporation**.
    profit to list what sold that day, week or month, by category or by item; mark things you
    bought to use (a ship, its fit) *Not for trade* so they stop waiting as unsold stock.
    *Open market orders* lists every order of the characters that allow order tracking, filterable
-   by character, side and status, with a suggested price for the outbid and undercut ones.
+   by character, side and status, with a suggested price for the outbid and undercut ones, and
+   for items that reprocess, the price below which reprocessing pays more (sell) or above which it
+   loses (buy).
 9. **Reprocess or sell**: on *Industry*, paste items (select them in an inventory window and copy),
    choose where they are and whose skills to use, and *Appraise*.
 
@@ -309,6 +311,18 @@ tracker; `/ratting` redirects here.)
   price follow eve-skills' `orders --check` (`pricing.py`): sell orders are lowest, undercut, or
   behind a thin sliver worth ignoring; buy orders highest or outbid. Buy orders are compared at
   their station only, whatever their range.
+- **Reprocess floor and ceiling** (`src/lib/orders/floor.ts`): for an order of an item that
+  reprocesses, what one unit's materials fetch in that station's own buy orders, worked out as the
+  Industry calculator does (whole portions, each material rounded down, units short of a portion
+  pro rata, the buy book walked for the materials of every unit left on the order). A sell order's
+  floor is that value after the reprocessing tax; the item and its materials pay the same sales tax,
+  so it compares with the order's price directly. A buy order's ceiling is the same less sales tax,
+  since buying pays none. Broker fees are left out: the order already paid its own. Yield and taxes
+  come from the order's character's skills and standings (`skills` consent, read live), else no
+  skills; Jita's rates as on Industry, other NPC stations' from ESI (`/universe/stations/{id}`),
+  and a structure at 50% with its owner-set tax assumed 0% (ESI does not publish it). Materials are
+  read like the books (structures whole; at stations per type, cached 15 minutes). *vs floor* shows
+  the order's price as a percentage of it, and flags a suggested price that would cross it.
 - **History**: ESI returns 30 days of journal, so history starts 30 days before a character's
   first sync and grows from there. Entries are keyed by journal id, so re-reading is harmless.
 - **Syncing**: opening the page syncs characters not synced within the hour (ESI caches the

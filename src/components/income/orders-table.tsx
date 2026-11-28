@@ -31,6 +31,16 @@ export type OrderView = {
   bookAsOf: string | null;
   corp: { units: number; holdsBest: boolean } | null;
   own: { units: number; characterIds: number[]; holdsBest: boolean } | null;
+  reprocess: {
+    kind: "floor" | "ceiling";
+    price: number;
+    ratio: number;
+    rate: number;
+    partial: boolean;
+    reprocessingTax: number;
+    salesTax: number;
+    assumed: string[];
+  } | null;
 };
 
 export type OrderCharacterView = { id: number; name: string; portrait: string; color: string };
@@ -249,7 +259,15 @@ export function OrdersPanel({
         structures, as often as EVE updates them)
         {oldestBook ? ` (oldest used: ${eveTime(new Date(oldestBook))})` : ""}; a structure&apos;s market needs a character of
         yours that can dock there to allow market reading. EVE refreshes a character&apos;s order list every 20 minutes,
-        so a new or changed order can take that long to show, however often you sync. <em>Rival</em> shows{" "}
+        so a new or changed order can take that long to show, however often you sync. For items that reprocess,{" "}
+        <em>Floor / ceiling</em> is what one unit&apos;s materials fetch in the station&apos;s own buy orders, after the
+        character&apos;s reprocessing yield and tax (read from its skills and standings when it allows that, as on{" "}
+        <Link href="/industry" className="text-accent hover:underline">
+          Industry
+        </Link>
+        ): a sell order listed below its floor would bring more reprocessed, and a buy order above its ceiling (the same,
+        after sales tax) loses ISK if reprocessed. <em>vs floor</em> is the order&apos;s price as a percentage of it;{" "}
+        <span className="text-amber-400">⚠</span> marks an order whose suggested price would cross it. <em>Rival</em> shows{" "}
         <span className="text-sky-300">⇄</span> when another order of yours, from any of your characters, is priced ahead
         of one: you are competing with yourself. Undercut and outbid orders show <strong>bold</strong> until you copy their
         item name (to re-price it in game); a re-priced order, or a new undercut, is bold again. That is remembered in this
@@ -301,6 +319,17 @@ const COLUMNS: DataColumn[] = [
   { key: "bestOther", label: "Best other" },
   { key: "ahead", label: "Ahead", title: "Competing units priced ahead of this order, and how many days of the region's trade they are" },
   { key: "suggest", label: "Suggest", title: "One tick past the best competitor; a thin, clearly cheaper sliver of sell orders is ignored" },
+  {
+    key: "floor",
+    label: "Floor / ceiling",
+    title:
+      "Items that reprocess: what one unit's materials fetch in this station's buy orders, after your reprocessing yield and tax. A sell order's floor (listed below it, reprocessing pays more); a buy order's ceiling, after sales tax too (bought above it, reprocessing loses)",
+  },
+  {
+    key: "vsFloor",
+    label: "vs floor",
+    title: "The order's price as a percentage of its reprocess floor (sell) or ceiling (buy): a sell order under 100% or a buy order over 100% is past it",
+  },
   { key: "value", label: "Value left" },
   { key: "expires", label: "Expires", firstDir: 1 },
 ];
@@ -337,6 +366,70 @@ function rivalCell(o: OrderView, nameOf: (id: number) => string) {
     sort: (own?.units ?? 0) + (o.corp?.units ?? 0) + (own?.holdsBest || o.corp?.holdsBest ? 1e15 : 0),
     copy: [own && ownLabel, o.corp && "Corp member"].filter(Boolean).join(", "),
     title: titles.join("; "),
+  };
+}
+
+const pct = (fraction: number) => `${(fraction * 100).toFixed(fraction < 0.1 ? 1 : 0)}%`;
+
+/** A sell order under its floor, or a buy order over its ceiling. */
+const pastFloor = (o: OrderView) => o.reprocess !== null && (o.side === "sell" ? o.reprocess.ratio < 1 : o.reprocess.ratio > 1);
+/** The suggested price would take the order past its floor or ceiling. */
+const suggestPast = (o: OrderView) =>
+  o.reprocess !== null && o.suggest !== null && (o.side === "sell" ? o.suggest < o.reprocess.price : o.suggest > o.reprocess.price);
+
+function floorCells(o: OrderView) {
+  const r = o.reprocess;
+  if (!r) {
+    const none = { node: <span className="text-muted">–</span>, sort: null, copy: null };
+    return { floor: none, vsFloor: none };
+  }
+  const name = r.kind === "floor" ? "floor" : "ceiling";
+  const how = [
+    `Reprocess ${name}: ${formatIskExact(r.price)} a unit`,
+    `${pct(r.rate)} of the recipe after ${pct(r.reprocessingTax)} reprocessing tax`,
+    r.kind === "ceiling" ? `less ${pct(r.salesTax)} sales tax on the materials` : "the item and its materials pay the same sales tax",
+    "materials sold into this station's buy orders, for the units left",
+    r.partial ? "some materials have too few buyers here, so it counts only what sells" : null,
+    ...r.assumed,
+  ].filter(Boolean);
+  const past = pastFloor(o);
+  const crossing = suggestPast(o);
+  const suggestNote = crossing
+    ? `The suggested ${formatIsk(o.suggest!)} is ${o.side === "sell" ? "below the floor" : "above the ceiling"}: reprocessing would pay more than matching it.`
+    : null;
+  return {
+    floor: {
+      node: (
+        <span className={r.partial ? "text-muted" : undefined}>
+          {formatIsk(r.price)}
+          {r.partial ? "*" : ""}
+        </span>
+      ),
+      sort: r.price,
+      copy: formatPlain(r.price),
+      title: how.join("; "),
+    },
+    vsFloor: {
+      node: (
+        <span className={past ? "text-red-300" : crossing ? "text-amber-400" : undefined}>
+          {past ? "▼ " : crossing ? "⚠ " : ""}
+          {pct(r.ratio)}
+        </span>
+      ),
+      sort: r.ratio,
+      copy: pct(r.ratio),
+      title: [
+        `Price is ${pct(r.ratio)} of the reprocess ${name}`,
+        past
+          ? o.side === "sell"
+            ? "below it: the item brings less sold than reprocessed"
+            : "above it: the item is worth less reprocessed than it costs"
+          : null,
+        suggestNote,
+      ]
+        .filter(Boolean)
+        .join(". "),
+    },
   };
 }
 
@@ -431,6 +524,7 @@ function orderRow(
         copy: o.suggest === null ? null : formatPlain(o.suggest),
         title: o.suggest === null ? undefined : formatIskExact(o.suggest),
       },
+      ...floorCells(o),
       value: { node: formatIsk(value(o)), sort: value(o), copy: formatPlain(value(o)), title: formatIskExact(value(o)) },
       expires: { node: relative(o.expires, now), sort: new Date(o.expires).getTime(), copy: expires, title: expires },
     },
@@ -486,7 +580,11 @@ export function OrdersTable({
   return (
     <DataTable
       id="orders"
-      columns={showCorp || orders.some((o) => o.own) ? COLUMNS : COLUMNS.filter((c) => c.key !== "corp")}
+      columns={COLUMNS.filter(
+        (c) =>
+          (c.key !== "corp" || showCorp || orders.some((o) => o.own)) &&
+          ((c.key !== "floor" && c.key !== "vsFloor") || orders.some((o) => o.reprocess)),
+      )}
       onCopy={(row, column) => {
         if (column === "item" && row.data && isUnread(row.data)) markRead(row.data);
       }}
